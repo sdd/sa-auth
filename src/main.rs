@@ -1,12 +1,11 @@
 use std::{env,fmt};
-use log::debug;
 
-use aws_sdk_dynamodb::{Client as DynamodbClient, Client, Error as DynamoDbError, SdkError};
+use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError};
 use aws_sdk_dynamodb::model::AttributeValue;
 use chrono::Utc;
 use cookie::Cookie;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use lambda_http::{handler, lambda_runtime::{self, Error as LambdaError}, Request, Context, Response, IntoResponse, RequestExt};
 use lambda_http::http::{header,StatusCode};
 use reqwest::Client as ReqwestClient;
@@ -17,13 +16,12 @@ use unique_id::string::StringGenerator;
 use urlencoding;
 
 const REDIRECT_URI: &'static str = "https://solvastro.com/auth/callback";
-const DEFAULT_DEST_URL: &'static str = "https://solvastro.com";
+//const DEFAULT_DEST_URL: &'static str = "https://solvastro.com";
 
 const AUTH_COOKIE_DOMAIN: &'static str = "solvastro.com";
 const AUTH_COOKIE_NAME: &'static str = "auth";
 const AUTH_COOKIE_PATH: &'static str = "/";
 
-const GOOGLE_OAUTH_URL_TEMPLATE: &'static str = "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri={}&prompt=consent&response_type=code&client_id={}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline";
 const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
 const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
 const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
@@ -116,29 +114,35 @@ struct User {
     role: Role,
 }
 
+struct AppContext {
+    oauth_uri: String,
+    reqwest_client: ReqwestClient,
+    dynamodb_client: DynamodbClient,
+    id_generator: StringGenerator,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
-    lambda_runtime::run(handler(auth_handler)).await?;
+    let app_ctx: AppContext = init().await;
+    lambda_runtime::run(handler(|req, ctx| auth_handler(req, ctx, &app_ctx))).await?;
     Ok(())
 }
 
 async fn auth_handler(
     request: Request,
-    _: Context
+    _: Context,
+    app_ctx: &AppContext,
 ) -> Result<impl IntoResponse, LambdaError> {
 
     let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
     let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
-
-    // TODO: should be in a common init, shared between auth_handler instantiations
-    let (oauth_uri, client, dynamodb, id_generator) = init().await;
 
     let path = request.uri().path();
     match path {
         "/auth/login" => {
             Ok(Response::builder()
                 .status(StatusCode::FOUND)
-                .header(header::LOCATION, &oauth_uri)
+                .header(header::LOCATION, &app_ctx.oauth_uri)
                 .body("".to_string())
                 .unwrap())
         },
@@ -153,7 +157,7 @@ async fn auth_handler(
                 grant_type: "authorization_code"
             };
 
-            let token_response: TokenResponse = client
+            let token_response: TokenResponse = app_ctx.reqwest_client
                 .post(GOOGLE_ENDPOINT_TOKEN)
                 .form(&token_request)
                 .send()
@@ -164,7 +168,7 @@ async fn auth_handler(
             println!("Token Response: {:?}", &token_response);
 
             // hit the identity endpoint with token_response.access_token as a Bearer token.
-            let identity: GoogleIdentity = client
+            let identity: GoogleIdentity = app_ctx.reqwest_client
                 .get(GOOGLE_ENDPOINT_IDENTITY)
                 .bearer_auth(&token_response.access_token)
                 .send()
@@ -172,7 +176,7 @@ async fn auth_handler(
                 .json::<GoogleIdentity>()
                 .await?;
 
-            let user: User = get_user(dynamodb, id_generator, identity).await?;
+            let user: User = get_user(app_ctx, identity).await?;
 
             let jwt = create_jwt(&user.id, &user.role)?;
 
@@ -199,9 +203,9 @@ async fn auth_handler(
     }
 }
 
-async fn get_user(dynamodb: Client, id_generator: StringGenerator, identity: GoogleIdentity) -> Result<User, AuthServiceError> {
+async fn get_user(appctx: &AppContext, identity: GoogleIdentity) -> Result<User, AuthServiceError> {
     // check to see if there is a corresponding entry in the identities table
-    if let Some(matching_identity) = dynamodb.get_item()
+    if let Some(matching_identity) = appctx.dynamodb_client.get_item()
         .table_name(DYNAMODB_TABLE_IDENTITIES)
         .key("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
         .send()
@@ -209,7 +213,7 @@ async fn get_user(dynamodb: Client, id_generator: StringGenerator, identity: Goo
 
         // if there is, retrieve the matching user from the users table.
         if let Some(user_id) = matching_identity.get("user_id") {
-            if let Some(user) = dynamodb.get_item()
+            if let Some(user) = appctx.dynamodb_client.get_item()
                 .table_name(DYNAMODB_TABLE_USERS)
                 .key("id", AttributeValue::S(format!("{}:{:?}", GOOGLE_IDENTITY_PREFIX, user_id)))
                 .send()
@@ -230,7 +234,7 @@ async fn get_user(dynamodb: Client, id_generator: StringGenerator, identity: Goo
         // If not, need to insert a new identity.
 
         // Check for a user with a matching email
-        let user: Option<User> = if let Some(user) = dynamodb.get_item()
+        let user: Option<User> = if let Some(user) = appctx.dynamodb_client.get_item()
             .table_name(DYNAMODB_TABLE_USERS)
             .key("email", AttributeValue::S(identity.email.clone()))
             .send()
@@ -250,14 +254,14 @@ async fn get_user(dynamodb: Client, id_generator: StringGenerator, identity: Goo
         } else {
             // if there isn't, create a new user entry.
             let user = User {
-                id: id_generator.next_id(),
+                id: appctx.id_generator.next_id(),
                 name: identity.name.clone(),
                 email: identity.email.clone(),
                 role: Role::User
             };
 
             // insert the new user
-            dynamodb.put_item()
+            appctx.dynamodb_client.put_item()
                 .table_name(DYNAMODB_TABLE_USERS)
                 .item("id", AttributeValue::S(String::from(&user.id)))
                 .item("name", AttributeValue::S(String::from(&user.name)))
@@ -266,7 +270,7 @@ async fn get_user(dynamodb: Client, id_generator: StringGenerator, identity: Goo
                 .await?;
 
             // insert the new identity
-            dynamodb.put_item()
+            appctx.dynamodb_client.put_item()
                 .table_name(DYNAMODB_TABLE_IDENTITIES)
                 .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
                 .item("user_id", AttributeValue::S(String::from(&user.id)))
@@ -298,7 +302,7 @@ fn create_jwt(uid: &str, role: &Role) -> Result<String, AuthServiceError> {
         .map_err(|_| AuthServiceError::JWTCreationError)
 }
 
-async fn init() -> (String, ReqwestClient, DynamodbClient, StringGenerator) {
+async fn init() -> AppContext {
     let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
 
     let oauth_uri = format!(
@@ -307,11 +311,17 @@ async fn init() -> (String, ReqwestClient, DynamodbClient, StringGenerator) {
         client_id
     );
 
-    let client = reqwest::Client::new();
+    let reqwest_client = reqwest::Client::new();
 
     let shared_config = aws_config::load_from_env().await;
-    let dynamodb = DynamodbClient::new(&shared_config);
+    let dynamodb_client = DynamodbClient::new(&shared_config);
 
     let id_generator = StringGenerator::default();
-    (oauth_uri, client, dynamodb, id_generator)
+
+    AppContext {
+        oauth_uri,
+        reqwest_client,
+        dynamodb_client,
+        id_generator,
+    }
 }
