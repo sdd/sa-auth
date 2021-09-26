@@ -1,0 +1,37 @@
+[package]
+name = "sa-auth"
+version = "0.1.0"
+authors = ["Scott Donnelly"]
+edition = "2018"
+description = "Authentication lambda for web apps"
+keywords = ["AWS", "Lambda", "Auth", "OAuth"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+aws-config = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-config" }
+aws-sdk-dynamodb = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-sdk-dynamodb" }
+chrono = "0.4"
+cookie = "0.15"
+jsonwebtoken = "7"
+lambda_http = { version = "0.4", path = "../aws-lambda-rust-runtime/lambda-http" }
+lambda_runtime = { version = "0.4", path = "../aws-lambda-rust-runtime/lambda-runtime" }
+log = "0.4"
+reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+tokio = "1"
+unique_id = "0.1"
+urlencoding = "2.1"
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+
+
+
