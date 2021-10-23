@@ -1,13 +1,18 @@
 use std::{env,fmt};
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::future::Future;
 
 use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError};
 use aws_sdk_dynamodb::model::AttributeValue;
+use aws_sdk_dynamodb::output::PutItemOutput;
 use chrono::Utc;
 use cookie::Cookie;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use lambda_http::{handler, lambda_runtime::{self, Error as LambdaError}, Request, Context, Response, IntoResponse, RequestExt};
+use lambda_http::{handler, lambda_runtime::{self, Error as LambdaError}, Request, Context, Response, RequestExt};
 use lambda_http::http::{header,StatusCode};
+use lambda_http::lambda_runtime::Error;
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize,Serialize};
 use thiserror::Error as ThisError;
@@ -22,12 +27,33 @@ const AUTH_COOKIE_DOMAIN: &'static str = "solvastro.com";
 const AUTH_COOKIE_NAME: &'static str = "auth";
 const AUTH_COOKIE_PATH: &'static str = "/";
 
+// TODO: move to a GoogleStrategy library
 const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
 const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
 const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
 
 const DYNAMODB_TABLE_IDENTITIES: &'static str = "solvastro-identities";
 const DYNAMODB_TABLE_USERS: &'static str = "solvastro-users";
+
+#[derive(ThisError, Debug)]
+pub enum UserParseError {
+    #[error("Missing Id")]
+    MissingId,
+    #[error("Id not a string")]
+    IdNotAString,
+    #[error("Missing name")]
+    MissingName,
+    #[error("Name not a string")]
+    NameNotAString,
+    #[error("Missing email")]
+    MissingEmail,
+    #[error("Email not a string")]
+    EmailNotAString,
+    #[error("Missing role")]
+    MissingRole,
+    #[error("Role not a string")]
+    RoleNotAString,
+}
 
 #[derive(ThisError, Debug)]
 pub enum AuthServiceError {
@@ -42,11 +68,17 @@ pub enum AuthServiceError {
     #[error("could not get item from dynamodb")]
     DynamoDbGetItemError(#[from] SdkError<GetItemError>),
 
+    #[error("item not returned in DynamoDb response")]
+    MissingItemError,
+
     #[error("could not put item into dynamodb")]
     DynamoDbPutItemError(#[from] SdkError<PutItemError>),
 
     #[error("could not create JWT")]
     JWTCreationError,
+
+    #[error("could not parse user from db")]
+    DbUserParseError(#[from] UserParseError),
 }
 
 #[derive(Serialize, Debug)]
@@ -114,116 +146,202 @@ struct User {
     role: Role,
 }
 
-struct AppContext {
+impl TryFrom<HashMap<String, AttributeValue>> for User {
+    type Error = UserParseError;
+
+    fn try_from(user: HashMap<String, AttributeValue>) -> Result<Self, Self::Error> {
+        if let Some(id) = user.get("id") {
+            if let Ok(id) = id.as_s() {
+                if let Some(name) = user.get("name") {
+                    if let Ok(name) = name.as_s() {
+                        if let Some(email) = user.get("email") {
+                            if let Ok(email) = email.as_s() {
+                                if let Some(role) = user.get("role") {
+                                    if let Ok(role) = role.as_s() {
+                                        Ok(User {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            email: email.clone(),
+                                            role: Role::from_str(role),
+                                        })
+                                    } else {
+                                        Err(UserParseError::RoleNotAString)
+                                    }
+                                } else {
+                                    Err(UserParseError::MissingRole)
+                                }
+                            } else {
+                                Err(UserParseError::EmailNotAString)
+                            }
+                        } else {
+                            Err(UserParseError::MissingEmail)
+                        }
+                    } else {
+                        Err(UserParseError::NameNotAString)
+                    }
+                } else {
+                    Err(UserParseError::MissingName)
+                }
+            } else {
+                Err(UserParseError::IdNotAString)
+            }
+        } else {
+            Err(UserParseError::MissingId)
+        }
+    }
+}
+
+struct AppConfig {
     oauth_uri: String,
+    google_oauth_config: GoogleOAuthConfig,
+    jwt_secret: String,
+}
+
+struct AppContext {
+    cfg: AppConfig,
     reqwest_client: ReqwestClient,
     dynamodb_client: DynamodbClient,
     id_generator: StringGenerator,
 }
 
+// TODO: move to a GoogleStrategy library
+struct GoogleOAuthConfig {
+    client_id: String,
+    client_secret: String,
+    token_url: String,
+    identity_url: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
-    let app_ctx: AppContext = init().await;
+    let cfg: AppConfig = init_config().await;
+    let app_ctx: AppContext = init_context(cfg).await;
     lambda_runtime::run(handler(|req, ctx| auth_handler(req, ctx, &app_ctx))).await?;
     Ok(())
 }
 
 async fn auth_handler(
     request: Request,
-    _: Context,
+    ctx: Context,
     app_ctx: &AppContext,
-) -> Result<impl IntoResponse, LambdaError> {
-
-    let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
-    let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
-
-    let path = request.uri().path();
-    match path {
-        "/auth/login" => {
-            Ok(Response::builder()
-                .status(StatusCode::FOUND)
-                .header(header::LOCATION, &app_ctx.oauth_uri)
-                .body("".to_string())
-                .unwrap())
-        },
-
-        "/auth/callback" => {
-            let code: String = request.query_string_parameters().get("code").unwrap().into();
-            let token_request = TokenRequest {
-                code: &code,
-                client_id: client_id.as_str(),
-                client_secret: client_secret.as_str(),
-                redirect_uri: REDIRECT_URI,
-                grant_type: "authorization_code"
-            };
-
-            let token_response: TokenResponse = app_ctx.reqwest_client
-                .post(GOOGLE_ENDPOINT_TOKEN)
-                .form(&token_request)
-                .send()
-                .await?
-                .json::<TokenResponse>()
-                .await?;
-
-            println!("Token Response: {:?}", &token_response);
-
-            // hit the identity endpoint with token_response.access_token as a Bearer token.
-            let identity: GoogleIdentity = app_ctx.reqwest_client
-                .get(GOOGLE_ENDPOINT_IDENTITY)
-                .bearer_auth(&token_response.access_token)
-                .send()
-                .await?
-                .json::<GoogleIdentity>()
-                .await?;
-
-            let user: User = get_user(app_ctx, identity).await?;
-
-            let jwt = create_jwt(&user.id, &user.role)?;
-
-            // set a cookie containing the JWT
-            let cookie = Cookie::build(AUTH_COOKIE_NAME, jwt)
-                .domain(AUTH_COOKIE_DOMAIN)
-                .path(AUTH_COOKIE_PATH)
-                .http_only(true)
-                .finish();
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Set-Cookie", cookie.to_string())
-                .body(token_response.access_token)
-                .unwrap())
-        },
-
-        _ => {
-            Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body("404 Not Found".to_string())
-                .unwrap())
-        }
+) -> Result<Response<String>, LambdaError> {
+    match request.uri().path() {
+        "/auth/login" => login_handler(request, ctx, app_ctx),
+        "/auth/callback" => callback_handler(request, ctx, app_ctx).await,
+        _ => not_found_handler(request, ctx, app_ctx),
     }
 }
 
-async fn get_user(appctx: &AppContext, identity: GoogleIdentity) -> Result<User, AuthServiceError> {
-    // check to see if there is a corresponding entry in the identities table
-    if let Some(matching_identity) = appctx.dynamodb_client.get_item()
-        .table_name(DYNAMODB_TABLE_IDENTITIES)
-        .key("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
+fn login_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+    Ok(Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, &app_ctx.cfg.oauth_uri)
+        .body("".to_string())
+        .unwrap())
+}
+
+async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+    let code: String = req.query_string_parameters().get("code").unwrap().to_string();
+
+    let token_response = get_oauth_token(&code, app_ctx).await?;
+    println!("Token Response: {:?}", &token_response);
+    let identity = get_oauth_identity(&app_ctx, &token_response).await?;
+
+    let user: User = get_or_create_user(app_ctx, identity).await?;
+    let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
+
+    Ok(create_cookie_response(jwt))
+}
+
+fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<String>, Error> {
+    Ok(Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body("404 Not Found".to_string())
+        .unwrap())
+}
+
+/*
+// A middleware which logs an http request.
+async fn logger(req: Request) -> Result<Request, Infallible> {
+    println!("{} {} {}", req.remote_addr(), req.method(), req.uri().path());
+    Ok(req)
+}
+
+// Define an error handler function which will accept the `routerify::Error`
+// and the request information and generates an appropriate response.
+async fn error_handler(err: routerify::RouteError, _: RequestInfo) -> Response<Body> {
+    eprintln!("{}", err);
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(format!("Something went wrong: {}", err)))
+        .unwrap()
+}
+
+fn router() -> Router<Body, Infallible> {
+    // Create a router and specify the logger middleware and the handlers.
+    // Here, "Middleware::pre" means we're adding a pre middleware which will be executed
+    // before any route handlers.
+    Router::builder()
+        .middleware(Middleware::pre(logger))
+        .get("/auth/login", login_handler)
+        .get("/auth/callback", callback_handler)
+        .err_handler_with_info(error_handler)
+        .build()
+        .unwrap()
+}*/
+
+// TODO: move to a GoogleStrategy library
+pub async fn get_oauth_identity(app_ctx: &AppContext, token_response: &TokenResponse) -> Result<GoogleIdentity, Error> {
+    Ok(app_ctx.reqwest_client
+        .get(&app_ctx.cfg.google_oauth_config.identity_url)
+        .bearer_auth(&token_response.access_token)
         .send()
-        .await?.item {
+        .await?
+        .json::<GoogleIdentity>()
+        .await?)
+}
+
+// TODO: move to a GoogleStrategy library
+pub async fn get_oauth_token(code: &str, app_ctx: &AppContext) -> Result<TokenResponse, Error> {
+    let token_request = TokenRequest {
+        code,
+        client_id: app_ctx.cfg.google_oauth_config.client_id.as_str(),
+        client_secret: app_ctx.cfg.google_oauth_config.client_secret.as_str(),
+        redirect_uri: REDIRECT_URI,
+        grant_type: "authorization_code"
+    };
+
+    Ok(app_ctx.reqwest_client
+        .post(&app_ctx.cfg.google_oauth_config.token_url)
+        .form(&token_request)
+        .send()
+        .await?
+        .json::<TokenResponse>()
+        .await?)
+}
+
+fn create_cookie_response(jwt: String) -> Response<String> {
+    let cookie = Cookie::build(AUTH_COOKIE_NAME, jwt)
+        .domain(AUTH_COOKIE_DOMAIN)
+        .path(AUTH_COOKIE_PATH)
+        .http_only(true)
+        .finish();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Set-Cookie", cookie.to_string())
+        .body("".to_string())
+        .unwrap()
+}
+
+async fn get_or_create_user(app_ctx: &AppContext, identity: GoogleIdentity) -> Result<User, AuthServiceError> {
+    // check to see if there is a corresponding entry in the identities table
+    if let Ok(matching_identity) = get_identity(app_ctx, &identity).await {
 
         // if there is, retrieve the matching user from the users table.
         if let Some(user_id) = matching_identity.get("user_id") {
-            if let Some(user) = appctx.dynamodb_client.get_item()
-                .table_name(DYNAMODB_TABLE_USERS)
-                .key("id", AttributeValue::S(format!("{}:{:?}", GOOGLE_IDENTITY_PREFIX, user_id)))
-                .send()
-                .await?.item {
-                Ok(User {
-                    id: user.get("id").unwrap().as_s().unwrap().clone(),
-                    name: user.get("name").unwrap().as_s().unwrap().clone(),
-                    email: user.get("email").unwrap().as_s().unwrap().clone(),
-                    role: Role::from_str(user.get("role").unwrap().as_s().unwrap()),
-                })
+            if let Ok(user) = get_user_by_id(app_ctx, user_id.as_s().unwrap()).await {
+                User::try_from(user).map_err(AuthServiceError::DbUserParseError)
             } else {
                 Err(AuthServiceError::IdentityUserNotFound)
             }
@@ -234,17 +352,8 @@ async fn get_user(appctx: &AppContext, identity: GoogleIdentity) -> Result<User,
         // If not, need to insert a new identity.
 
         // Check for a user with a matching email
-        let user: Option<User> = if let Some(user) = appctx.dynamodb_client.get_item()
-            .table_name(DYNAMODB_TABLE_USERS)
-            .key("email", AttributeValue::S(identity.email.clone()))
-            .send()
-            .await?.item {
-            Some(User {
-                id: user.get("id").unwrap().as_s().unwrap().clone(),
-                name: user.get("name").unwrap().as_s().unwrap().clone(),
-                email: user.get("email").unwrap().as_s().unwrap().clone(),
-                role: Role::from_str(user.get("role").unwrap().as_s().unwrap()),
-            })
+        let user: Option<User> = if let Ok(user) = get_user_by_email(app_ctx, &identity.email).await {
+            Some(User::try_from(user).map_err(AuthServiceError::DbUserParseError)?)
         } else {
             None
         };
@@ -254,37 +363,66 @@ async fn get_user(appctx: &AppContext, identity: GoogleIdentity) -> Result<User,
         } else {
             // if there isn't, create a new user entry.
             let user = User {
-                id: appctx.id_generator.next_id(),
+                id: app_ctx.id_generator.next_id(),
                 name: identity.name.clone(),
                 email: identity.email.clone(),
                 role: Role::User
             };
 
-            // insert the new user
-            appctx.dynamodb_client.put_item()
-                .table_name(DYNAMODB_TABLE_USERS)
-                .item("id", AttributeValue::S(String::from(&user.id)))
-                .item("name", AttributeValue::S(String::from(&user.name)))
-                .item("email", AttributeValue::S(String::from(&user.email)))
-                .send()
-                .await?;
-
-            // insert the new identity
-            appctx.dynamodb_client.put_item()
-                .table_name(DYNAMODB_TABLE_IDENTITIES)
-                .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
-                .item("user_id", AttributeValue::S(String::from(&user.id)))
-                .send()
-                .await?;
-
+            insert_new_user(app_ctx, &user).await?;
+            insert_new_identity(app_ctx, &identity, &user).await?;
             Ok(user)
         }
     }
 }
 
-fn create_jwt(uid: &str, role: &Role) -> Result<String, AuthServiceError> {
-    let jwt_secret = env::var("JWT_SECRET").expect("Missing JWT_SECRET env var");
+async fn get_user_by_id(app_ctx: &AppContext, user_id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+    dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_USERS, user_id).await
+}
 
+async fn get_user_by_email(app_ctx: &AppContext, email: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+    dynamodb_get_by_key(app_ctx, DYNAMODB_TABLE_USERS, "email", email).await
+}
+
+async fn get_identity(app_ctx: &AppContext, identity: &GoogleIdentity) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+    let id = format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id);
+    dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_IDENTITIES, &id).await
+}
+
+async fn dynamodb_get_by_id(app_ctx: &AppContext, table_name: &str, id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+    dynamodb_get_by_key(app_ctx, table_name,  "id", id).await
+}
+
+async fn dynamodb_get_by_key(app_ctx: &AppContext, table_name: &str, key: &str, val: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+    if let Some(item) = app_ctx.dynamodb_client.get_item()
+        .table_name(table_name)
+        .key(key, AttributeValue::S(val.to_string()))
+        .send()
+        .await?.item {
+        Ok(item)
+    } else {
+        Err(AuthServiceError::MissingItemError)
+    }
+}
+
+fn insert_new_identity(app_ctx: &AppContext, identity: &GoogleIdentity, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
+    app_ctx.dynamodb_client.put_item()
+        .table_name(DYNAMODB_TABLE_IDENTITIES)
+        .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
+        .item("user_id", AttributeValue::S(String::from(&user.id)))
+        .send()
+}
+
+fn insert_new_user(app_ctx: &AppContext, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
+    app_ctx.dynamodb_client.put_item()
+        .table_name(DYNAMODB_TABLE_USERS)
+        .item("id", AttributeValue::S(String::from(&user.id)))
+        .item("name", AttributeValue::S(String::from(&user.name)))
+        .item("email", AttributeValue::S(String::from(&user.email)))
+        .send()
+}
+
+fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthServiceError> {
     let expiration = Utc::now()
         .checked_add_signed(chrono::Duration::seconds(3600))
         .expect("valid timestamp")
@@ -298,12 +436,14 @@ fn create_jwt(uid: &str, role: &Role) -> Result<String, AuthServiceError> {
 
     let header = Header::new(Algorithm::HS512);
 
-    encode(&header, &claims, &EncodingKey::from_secret(jwt_secret.as_ref()))
+    encode(&header, &claims, &EncodingKey::from_secret(secret.as_ref()))
         .map_err(|_| AuthServiceError::JWTCreationError)
 }
 
-async fn init() -> AppContext {
+async fn init_config() -> AppConfig {
+    let jwt_secret = env::var("JWT_SECRET").expect("Missing JWT_SECRET env var");
     let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
+    let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
 
     let oauth_uri = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri={}&prompt=consent&response_type=code&client_id={}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline",
@@ -311,6 +451,21 @@ async fn init() -> AppContext {
         client_id
     );
 
+    let google_oauth_config = GoogleOAuthConfig {
+        client_id,
+        client_secret,
+        token_url: GOOGLE_ENDPOINT_TOKEN.to_string(),
+        identity_url: GOOGLE_ENDPOINT_IDENTITY.to_string(),
+    };
+
+    AppConfig {
+        oauth_uri,
+        google_oauth_config,
+        jwt_secret,
+    }
+}
+
+async fn init_context(cfg: AppConfig) -> AppContext {
     let reqwest_client = reqwest::Client::new();
 
     let shared_config = aws_config::load_from_env().await;
@@ -319,9 +474,131 @@ async fn init() -> AppContext {
     let id_generator = StringGenerator::default();
 
     AppContext {
-        oauth_uri,
+        cfg,
         reqwest_client,
         dynamodb_client,
         id_generator,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+    use lambda_http::http::Uri;
+    use super::*;
+
+    #[tokio::test]
+    async fn init_config_returns_a_working_config() {
+        env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+        env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+        env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        let result = init_config().await;
+
+        assert_eq!(result.google_oauth_config.client_id, "TEST_CLIENT_ID");
+        assert_eq!(result.google_oauth_config.client_secret, "TEST_CLIENT_SECRET");
+        assert_eq!(result.jwt_secret, "TEST_JWT_SECRET");
+    }
+
+    #[tokio::test]
+    async fn init_context_returns_a_working_context() {
+        env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+        env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+        env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        let cfg = init_config().await;
+        let ctx = init_context(cfg).await;
+
+        let generated_id = ctx.id_generator.next_id();
+        assert_ne!(generated_id, "");
+    }
+
+    #[tokio::test]
+    async fn login_handler_returns_well_formed_301() {
+        env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+        env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+        env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        let cfg = init_config().await;
+        let app_ctx = init_context(cfg).await;
+
+        let mut req = Request::default();
+        *req.uri_mut() = Uri::from_str("https://example.local/login").unwrap();
+        let ctx = Context::default();
+
+        let result = login_handler(req, ctx, &app_ctx).unwrap();
+        assert_eq!(result.status(), StatusCode::FOUND);
+        assert_eq!(result.headers().get("location").unwrap(), "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fsolvastro.com%2Fauth%2Fcallback&prompt=consent&response_type=code&client_id=TEST_CLIENT_ID&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline");
+    }
+
+    #[test]
+    fn get_user() {
+        // TODO
+    }
+
+    #[tokio::test]
+    async fn not_found_handler_gives_404() {
+        env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+        env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+        env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        let cfg = init_config().await;
+        let app_ctx = init_context(cfg).await;
+
+        let mut req = Request::default();
+        *req.uri_mut() = Uri::from_str("https://example.local/some-weird-path").unwrap();
+        let ctx = Context::default();
+
+        let result = not_found_handler(req, ctx, &app_ctx).unwrap();
+        assert_eq!(result.status(), 404);
+    }
+
+    // #[test]
+    // fn test_get_identity_works() {
+    //     env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+    //     env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+    //     env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+    //     let cfg = init_config().await;
+    //     let app_ctx = init_context(cfg).await;
+    //
+    //     let mut req = Request::default();
+    //     *req.uri_mut() = Uri::from_str("https://example.local/login").unwrap();
+    //     let ctx = Context::default();
+    //
+    //     // TODO
+    // }
+
+    // #[test]
+    // fn test_get_oauth_token_works() {
+    //     env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
+    //     env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+    //     env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+    //     let cfg = init_config().await;
+    //     let app_ctx = init_context(cfg).await;
+    //
+    //     // TODO: Mock HTTP setup?
+    //
+    //     let result = get_oauth_token(code, &app_ctx).await?;
+    //
+    //     assert_eq!(result.access_token, access_token);
+    // }
+
+    #[test]
+    fn create_jwt_successfully_creates_a_jwt() {
+        let uid = "userid-001";
+        let role: Role = Role::Admin;
+
+        let jwt_secret =  b"secret";
+
+        let jwt = create_jwt(uid, &role, jwt_secret).unwrap();
+
+        let expected = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9";
+        assert_eq!(jwt.split('.').collect::<Vec<_>>()[0], expected);
+    }
+
+    #[test]
+    fn create_cookie_response_gives_a_well_formed_cookie() {
+        let jwt = "A_JWT".to_string();
+        let result = create_cookie_response(jwt).into_parts();
+
+        assert_eq!(result.0.status, 200);
+        assert_eq!(result.0.headers.get("set-cookie").unwrap(), "auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");
+        assert_eq!(result.1, "");
     }
 }
