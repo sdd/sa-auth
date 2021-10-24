@@ -363,36 +363,6 @@ fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<
         .unwrap())
 }
 
-/*
-// A middleware which logs an http request.
-async fn logger(req: Request) -> Result<Request, Infallible> {
-    println!("{} {} {}", req.remote_addr(), req.method(), req.uri().path());
-    Ok(req)
-}
-
-// Define an error handler function which will accept the `routerify::Error`
-// and the request information and generates an appropriate response.
-async fn error_handler(err: routerify::RouteError, _: RequestInfo) -> Response<Body> {
-    eprintln!("{}", err);
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::from(format!("Something went wrong: {}", err)))
-        .unwrap()
-}
-
-fn router() -> Router<Body, Infallible> {
-    // Create a router and specify the logger middleware and the handlers.
-    // Here, "Middleware::pre" means we're adding a pre middleware which will be executed
-    // before any route handlers.
-    Router::builder()
-        .middleware(Middleware::pre(logger))
-        .get("/auth/login", login_handler)
-        .get("/auth/callback", callback_handler)
-        .err_handler_with_info(error_handler)
-        .build()
-        .unwrap()
-}*/
-
 // TODO: move to a GoogleStrategy library
 pub async fn get_oauth_identity(app_ctx: &AppContext<'_>, token_response: &TokenResponse) -> Result<GoogleIdentity, Error> {
     Ok(app_ctx.reqwest_client
@@ -472,19 +442,6 @@ async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: 
     }
 }
 
-// async fn get_user_by_id(app_ctx: &AppContext<'_>, user_id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-//     dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_USERS, user_id).await
-// }
-
-// async fn get_user_by_email(app_ctx: &AppContext<'_>, email: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-//     dynamodb_get_by_key(app_ctx, DYNAMODB_TABLE_USERS, "email", email).await
-// }
-
-// async fn get_identity(app_ctx: &AppContext<'_>, identity: &GoogleIdentity) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-//     let id = format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id);
-//     dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_IDENTITIES, &id).await
-// }
-
 // fn insert_new_identity(app_ctx: &AppContext, identity: &GoogleIdentity, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
 //     app_ctx.dynamodb_client.put_item()
 //         .table_name(DYNAMODB_TABLE_IDENTITIES)
@@ -547,11 +504,6 @@ async fn init_config() -> AppConfig {
 
 async fn init_context<'a>(cfg: AppConfig, dynamodb_client: &'a DynamodbClient) -> AppContext<'a> {
     let reqwest_client = reqwest::Client::new();
-
-    //let shared_config = aws_config::load_from_env().await;
-    //let dynamodb_client = DynamodbClient::new(&shared_config);
-    //let client_ref = &dynamodb_client;
-
     let id_generator = StringGenerator::default();
 
     let identity_repository = DynamoDbIdentityRepository::new(dynamodb_client);
@@ -561,7 +513,6 @@ async fn init_context<'a>(cfg: AppConfig, dynamodb_client: &'a DynamodbClient) -
         cfg,
         reqwest_client,
         id_generator,
-        //dynamodb_client,
         identity_repository,
         user_repository,
     }
