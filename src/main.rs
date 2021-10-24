@@ -1,8 +1,9 @@
 use std::{env,fmt};
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::future::Future;
 
+use async_trait::async_trait;
 use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError};
 use aws_sdk_dynamodb::model::AttributeValue;
@@ -82,7 +83,7 @@ pub enum AuthServiceError {
 }
 
 #[derive(Serialize, Debug)]
-struct TokenRequest<'a> {
+pub struct TokenRequest<'a> {
     code: &'a str,
     client_id: &'a str,
     client_secret: &'a str,
@@ -91,7 +92,7 @@ struct TokenRequest<'a> {
 }
 
 #[derive(Deserialize, Debug)]
-struct TokenResponse {
+pub struct TokenResponse {
     access_token: String,
     expires_in: u32,
     token_type: String,
@@ -100,12 +101,18 @@ struct TokenResponse {
 }
 
 #[derive(Deserialize, Debug)]
-struct GoogleIdentity {
+pub struct GoogleIdentity {
     name: String,
     picture: String,
     email: String,
     id: String,
     verified_email: bool
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Identity {
+    id: String,
+    user_id: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -133,13 +140,13 @@ impl fmt::Display for Role {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct Claims {
+pub struct Claims {
     sub: String,
     role: String,
     exp: usize,
 }
 
-struct User {
+pub struct User {
     id: String,
     name: String,
     email: String,
@@ -191,17 +198,19 @@ impl TryFrom<HashMap<String, AttributeValue>> for User {
     }
 }
 
-struct AppConfig {
+pub struct AppConfig {
     oauth_uri: String,
     google_oauth_config: GoogleOAuthConfig,
     jwt_secret: String,
 }
 
-struct AppContext {
+pub struct AppContext<'a> {
     cfg: AppConfig,
     reqwest_client: ReqwestClient,
-    dynamodb_client: DynamodbClient,
+    //dynamodb_client: DynamodbClient,
     id_generator: StringGenerator,
+    identity_repository: DynamoDbIdentityRepository<'a>,
+    user_repository: DynamoDbUserRepository<'a>,
 }
 
 // TODO: move to a GoogleStrategy library
@@ -212,10 +221,104 @@ struct GoogleOAuthConfig {
     identity_url: String,
 }
 
+
+#[async_trait]
+trait IdentityRepository {
+    async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError>;
+}
+
+#[async_trait]
+trait UserRepository {
+    async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError>;
+    async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError>;
+}
+
+struct DynamoDbIdentityRepository<'a> {
+    client: &'a DynamodbClient,
+    table_name: String,
+}
+
+impl <'a> DynamoDbIdentityRepository<'a> {
+    pub fn new(client: &DynamodbClient) -> DynamoDbIdentityRepository {
+        DynamoDbIdentityRepository {
+            client,
+            table_name: DYNAMODB_TABLE_IDENTITIES.into()
+        }
+    }
+}
+
+#[async_trait]
+impl IdentityRepository for DynamoDbIdentityRepository<'_> {
+    async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError> {
+        let id = format!("{}:{}", GOOGLE_IDENTITY_PREFIX, id);
+        if let Some(identity) = dynamodb_get_by_id(&self.client, &self.table_name, &id).await? {
+            Ok(Some(Identity {
+                id: identity.get("id").unwrap().as_s().unwrap().clone(),
+                user_id: identity.get("user_id").unwrap().as_s().unwrap().clone(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+struct DynamoDbUserRepository<'a> {
+    client: &'a DynamodbClient,
+    table_name: String,
+}
+
+impl <'a> DynamoDbUserRepository<'a> {
+    pub fn new(client: &DynamodbClient) -> DynamoDbUserRepository {
+        DynamoDbUserRepository {
+            client,
+            table_name: DYNAMODB_TABLE_IDENTITIES.into()
+        }
+    }
+}
+
+#[async_trait]
+impl UserRepository for DynamoDbUserRepository<'_> {
+    async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+        if let Some(user) = dynamodb_get_by_id(&self.client, &self.table_name, &id).await? {
+            Ok(Some(user.try_into()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn get_by_email(&self, email: &str) -> Result<Option<User>, AuthServiceError> {
+        if let Some(user) = dynamodb_get_by_key(&self.client, &self.table_name, "email", &email).await? {
+            Ok(Some(user.try_into()?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+async fn dynamodb_get_by_key(dynamodb_client: &DynamodbClient, table_name: &str, key: &str, val: &str) -> Result<Option<HashMap<String, AttributeValue>>, AuthServiceError> {
+    if let Some(item) = dynamodb_client.get_item()
+        .table_name(table_name)
+        .key(key, AttributeValue::S(val.to_string()))
+        .send()
+        .await?.item {
+        Ok(Some(item))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn dynamodb_get_by_id(dynamodb_client: &DynamodbClient, table_name: &str, id: &str) -> Result<Option<HashMap<String, AttributeValue>>, AuthServiceError> {
+    dynamodb_get_by_key(dynamodb_client, table_name,  "id", id).await
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
     let cfg: AppConfig = init_config().await;
-    let app_ctx: AppContext = init_context(cfg).await;
+    let shared_config = aws_config::load_from_env().await;
+    let dynamodb_client = DynamodbClient::new(&shared_config);
+
+    let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
     lambda_runtime::run(handler(|req, ctx| auth_handler(req, ctx, &app_ctx))).await?;
     Ok(())
 }
@@ -223,7 +326,7 @@ async fn main() -> Result<(), LambdaError> {
 async fn auth_handler(
     request: Request,
     ctx: Context,
-    app_ctx: &AppContext,
+    app_ctx: &AppContext<'_>,
 ) -> Result<Response<String>, LambdaError> {
     match request.uri().path() {
         "/auth/login" => login_handler(request, ctx, app_ctx),
@@ -240,14 +343,14 @@ fn login_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Respons
         .unwrap())
 }
 
-async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext<'_>) -> Result<Response<String>, Error> {
     let code: String = req.query_string_parameters().get("code").unwrap().to_string();
 
     let token_response = get_oauth_token(&code, app_ctx).await?;
     println!("Token Response: {:?}", &token_response);
     let identity = get_oauth_identity(&app_ctx, &token_response).await?;
 
-    let user: User = get_or_create_user(app_ctx, identity).await?;
+    let user: User = get_or_create_user(identity, &app_ctx.identity_repository, &app_ctx.user_repository, &app_ctx.id_generator).await?;
     let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
     Ok(create_cookie_response(jwt))
@@ -291,7 +394,7 @@ fn router() -> Router<Body, Infallible> {
 }*/
 
 // TODO: move to a GoogleStrategy library
-pub async fn get_oauth_identity(app_ctx: &AppContext, token_response: &TokenResponse) -> Result<GoogleIdentity, Error> {
+pub async fn get_oauth_identity(app_ctx: &AppContext<'_>, token_response: &TokenResponse) -> Result<GoogleIdentity, Error> {
     Ok(app_ctx.reqwest_client
         .get(&app_ctx.cfg.google_oauth_config.identity_url)
         .bearer_auth(&token_response.access_token)
@@ -302,7 +405,7 @@ pub async fn get_oauth_identity(app_ctx: &AppContext, token_response: &TokenResp
 }
 
 // TODO: move to a GoogleStrategy library
-pub async fn get_oauth_token(code: &str, app_ctx: &AppContext) -> Result<TokenResponse, Error> {
+pub async fn get_oauth_token(code: &str, app_ctx: &AppContext<'_>) -> Result<TokenResponse, Error> {
     let token_request = TokenRequest {
         code,
         client_id: app_ctx.cfg.google_oauth_config.client_id.as_str(),
@@ -334,93 +437,70 @@ fn create_cookie_response(jwt: String) -> Response<String> {
         .unwrap()
 }
 
-async fn get_or_create_user(app_ctx: &AppContext, identity: GoogleIdentity) -> Result<User, AuthServiceError> {
+async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, id_repo: &I, user_repo: &U, id_generator: &StringGenerator) -> Result<User, AuthServiceError> {
     // check to see if there is a corresponding entry in the identities table
-    if let Ok(matching_identity) = get_identity(app_ctx, &identity).await {
+    if let Some(matching_identity) = id_repo.get_by_id(&identity.id).await? {
 
         // if there is, retrieve the matching user from the users table.
-        if let Some(user_id) = matching_identity.get("user_id") {
-            if let Ok(user) = get_user_by_id(app_ctx, user_id.as_s().unwrap()).await {
-                User::try_from(user).map_err(AuthServiceError::DbUserParseError)
-            } else {
-                Err(AuthServiceError::IdentityUserNotFound)
-            }
+        if let Some(user) = user_repo.get_by_id(&matching_identity.user_id).await? {
+            Ok(user)
         } else {
-            Err(AuthServiceError::IdentityMissingUserId)
+            Err(AuthServiceError::IdentityUserNotFound)
         }
     } else {
         // If not, need to insert a new identity.
 
         // Check for a user with a matching email
-        let user: Option<User> = if let Ok(user) = get_user_by_email(app_ctx, &identity.email).await {
-            Some(User::try_from(user).map_err(AuthServiceError::DbUserParseError)?)
-        } else {
-            None
-        };
+        let user = user_repo.get_by_email(&identity.email).await?;
 
         if let Some(user) = user {
             Ok(user)
         } else {
             // if there isn't, create a new user entry.
             let user = User {
-                id: app_ctx.id_generator.next_id(),
+                id: id_generator.next_id(),
                 name: identity.name.clone(),
                 email: identity.email.clone(),
                 role: Role::User
             };
 
-            insert_new_user(app_ctx, &user).await?;
-            insert_new_identity(app_ctx, &identity, &user).await?;
+            // TODO
+            //insert_new_user(app_ctx, &user).await?;
+            //insert_new_identity(app_ctx, &identity, &user).await?;
             Ok(user)
         }
     }
 }
 
-async fn get_user_by_id(app_ctx: &AppContext, user_id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-    dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_USERS, user_id).await
-}
+// async fn get_user_by_id(app_ctx: &AppContext<'_>, user_id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+//     dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_USERS, user_id).await
+// }
 
-async fn get_user_by_email(app_ctx: &AppContext, email: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-    dynamodb_get_by_key(app_ctx, DYNAMODB_TABLE_USERS, "email", email).await
-}
+// async fn get_user_by_email(app_ctx: &AppContext<'_>, email: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+//     dynamodb_get_by_key(app_ctx, DYNAMODB_TABLE_USERS, "email", email).await
+// }
 
-async fn get_identity(app_ctx: &AppContext, identity: &GoogleIdentity) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-    let id = format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id);
-    dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_IDENTITIES, &id).await
-}
+// async fn get_identity(app_ctx: &AppContext<'_>, identity: &GoogleIdentity) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
+//     let id = format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id);
+//     dynamodb_get_by_id(app_ctx, DYNAMODB_TABLE_IDENTITIES, &id).await
+// }
 
-async fn dynamodb_get_by_id(app_ctx: &AppContext, table_name: &str, id: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-    dynamodb_get_by_key(app_ctx, table_name,  "id", id).await
-}
+// fn insert_new_identity(app_ctx: &AppContext, identity: &GoogleIdentity, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
+//     app_ctx.dynamodb_client.put_item()
+//         .table_name(DYNAMODB_TABLE_IDENTITIES)
+//         .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
+//         .item("user_id", AttributeValue::S(String::from(&user.id)))
+//         .send()
+// }
 
-async fn dynamodb_get_by_key(app_ctx: &AppContext, table_name: &str, key: &str, val: &str) -> Result<HashMap<String, AttributeValue>, AuthServiceError> {
-    if let Some(item) = app_ctx.dynamodb_client.get_item()
-        .table_name(table_name)
-        .key(key, AttributeValue::S(val.to_string()))
-        .send()
-        .await?.item {
-        Ok(item)
-    } else {
-        Err(AuthServiceError::MissingItemError)
-    }
-}
-
-fn insert_new_identity(app_ctx: &AppContext, identity: &GoogleIdentity, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
-    app_ctx.dynamodb_client.put_item()
-        .table_name(DYNAMODB_TABLE_IDENTITIES)
-        .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
-        .item("user_id", AttributeValue::S(String::from(&user.id)))
-        .send()
-}
-
-fn insert_new_user(app_ctx: &AppContext, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
-    app_ctx.dynamodb_client.put_item()
-        .table_name(DYNAMODB_TABLE_USERS)
-        .item("id", AttributeValue::S(String::from(&user.id)))
-        .item("name", AttributeValue::S(String::from(&user.name)))
-        .item("email", AttributeValue::S(String::from(&user.email)))
-        .send()
-}
+// fn insert_new_user(app_ctx: &AppContext, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
+//     app_ctx.dynamodb_client.put_item()
+//         .table_name(DYNAMODB_TABLE_USERS)
+//         .item("id", AttributeValue::S(String::from(&user.id)))
+//         .item("name", AttributeValue::S(String::from(&user.name)))
+//         .item("email", AttributeValue::S(String::from(&user.email)))
+//         .send()
+// }
 
 fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthServiceError> {
     let expiration = Utc::now()
@@ -465,21 +545,28 @@ async fn init_config() -> AppConfig {
     }
 }
 
-async fn init_context(cfg: AppConfig) -> AppContext {
+async fn init_context<'a>(cfg: AppConfig, dynamodb_client: &'a DynamodbClient) -> AppContext<'a> {
     let reqwest_client = reqwest::Client::new();
 
-    let shared_config = aws_config::load_from_env().await;
-    let dynamodb_client = DynamodbClient::new(&shared_config);
+    //let shared_config = aws_config::load_from_env().await;
+    //let dynamodb_client = DynamodbClient::new(&shared_config);
+    //let client_ref = &dynamodb_client;
 
     let id_generator = StringGenerator::default();
+
+    let identity_repository = DynamoDbIdentityRepository::new(dynamodb_client);
+    let user_repository = DynamoDbUserRepository::new(dynamodb_client);
 
     AppContext {
         cfg,
         reqwest_client,
-        dynamodb_client,
         id_generator,
+        //dynamodb_client,
+        identity_repository,
+        user_repository,
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -505,9 +592,12 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         let cfg = init_config().await;
-        let ctx = init_context(cfg).await;
+        let shared_config = aws_config::load_from_env().await;
+        let dynamodb_client = DynamodbClient::new(&shared_config);
 
-        let generated_id = ctx.id_generator.next_id();
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
+
+        let generated_id = app_ctx.id_generator.next_id();
         assert_ne!(generated_id, "");
     }
 
@@ -517,7 +607,10 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         let cfg = init_config().await;
-        let app_ctx = init_context(cfg).await;
+        let shared_config = aws_config::load_from_env().await;
+        let dynamodb_client = DynamodbClient::new(&shared_config);
+
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/login").unwrap();
@@ -539,7 +632,10 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         let cfg = init_config().await;
-        let app_ctx = init_context(cfg).await;
+        let shared_config = aws_config::load_from_env().await;
+        let dynamodb_client = DynamodbClient::new(&shared_config);
+
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/some-weird-path").unwrap();

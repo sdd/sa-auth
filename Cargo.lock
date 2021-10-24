@@ -24,6 +24,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44318e776df68115a881de9a8fd1b9e53368d7a4a5ce4cc48517da3393233a5e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atomic_refcell"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -697,12 +708,13 @@ dependencies = [
 
 [[package]]
 name = "lambda_http"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f10599c844cf7584c0dfbf6030df7c174cd5c91f2515412f8875de2a0f2b3fc5"
 dependencies = [
  "base64 0.13.0",
  "http",
  "lambda_runtime",
- "log",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -710,7 +722,9 @@ dependencies = [
 
 [[package]]
 name = "lambda_runtime"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17ed88d8421123f9546cbd0c4235386803859c4a20b80a6eb613a652b486df8e"
 dependencies = [
  "async-stream",
  "bytes",
@@ -1164,6 +1178,7 @@ checksum = "71d301d4193d031abdd79ff7e3dd721168a9572ef3fe51a1517aba235bd8f86e"
 name = "sa-auth"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "chrono",
