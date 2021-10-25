@@ -118,7 +118,7 @@ pub struct Identity {
     user_id: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Role {
     User,
     Admin,
@@ -149,6 +149,7 @@ pub struct Claims {
     exp: usize,
 }
 
+#[derive(Debug)]
 pub struct User {
     id: String,
     name: String,
@@ -201,6 +202,7 @@ impl TryFrom<HashMap<String, AttributeValue>> for User {
     }
 }
 
+#[derive(Debug)]
 pub struct AppConfig {
     oauth_uri: String,
     google_oauth_config: GoogleOAuthConfig,
@@ -216,6 +218,7 @@ pub struct AppContext<'a> {
 }
 
 // TODO: move to a GoogleStrategy library
+#[derive(Debug)]
 struct GoogleOAuthConfig {
     client_id: String,
     client_secret: String,
@@ -398,8 +401,8 @@ async fn dynamodb_get_by_id(dynamodb_client: &DynamodbClient, table_name: &str, 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
     let cfg: AppConfig = init_config().await;
-    let shared_config = aws_config::load_from_env().await;
-    let dynamodb_client = DynamodbClient::new(&shared_config);
+    let aws_config = aws_config::load_from_env().await;
+    let dynamodb_client = DynamodbClient::new(&aws_config);
     let reqwest_client = ReqwestClient::new();
 
     let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
@@ -422,22 +425,29 @@ async fn auth_handler(
 fn login_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
     Ok(Response::builder()
         .status(StatusCode::FOUND)
-        .header(header::LOCATION, &app_ctx.cfg.oauth_uri)
+        .header(header::LOCATION, &app_ctx.google_oauth_provider.login_url)
         .body("".to_string())
         .unwrap())
 }
 
 async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext<'_>) -> Result<Response<String>, Error> {
-    let code: String = req.query_string_parameters().get("code").unwrap().to_string();
+    if let Some(code) = req.query_string_parameters().get("code") {
+        let code = code.to_string();
 
-    let token_response = app_ctx.google_oauth_provider.get_token(&code).await?;
-    println!("Token Response: {:?}", &token_response);
-    let identity = app_ctx.google_oauth_provider.get_identity(&token_response.access_token).await?;
+        let token_response = app_ctx.google_oauth_provider.get_token(&code).await?;
+        println!("Token Response: {:?}", &token_response);
+        let identity = app_ctx.google_oauth_provider.get_identity(&token_response.access_token).await?;
 
-    let user: User = get_or_create_user(identity, &app_ctx.identity_repository, &app_ctx.user_repository, &app_ctx.id_generator).await?;
-    let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
+        let user: User = get_or_create_user(identity, &app_ctx.identity_repository, &app_ctx.user_repository, &app_ctx.id_generator).await?;
+        let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
-    Ok(create_cookie_response(jwt))
+        Ok(create_cookie_response(jwt))
+    } else {
+        Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Missing code parameter".to_string())
+            .unwrap())
+    }
 }
 
 fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<String>, Error> {
@@ -461,7 +471,7 @@ fn create_cookie_response(jwt: String) -> Response<String> {
         .unwrap()
 }
 
-async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, identity_repo: &I, user_repo: &U, id_generator: &StringGenerator) -> Result<User, AuthServiceError> {
+async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, identity_repo: &I, user_repo: &U, id_generator: &impl Generator<String>) -> Result<User, AuthServiceError> {
     // check to see if there is a corresponding entry in the identities table
     if let Some(matching_identity) = identity_repo.get_by_id(&identity.id).await? {
 
@@ -478,6 +488,12 @@ async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: 
         let user = user_repo.get_by_email(&identity.email).await?;
 
         if let Some(user) = user {
+            // if there is one, insert a new identity for this user
+            let new_identity: Identity = Identity {
+                id: identity.id.clone(),
+                user_id: user.id.clone()
+            };
+            identity_repo.insert(&new_identity, &user).await?;
             Ok(user)
         } else {
             // if there isn't, create a new user entry.
@@ -592,8 +608,9 @@ mod tests {
         let cfg = init_config().await;
         let shared_config = aws_config::load_from_env().await;
         let dynamodb_client = DynamodbClient::new(&shared_config);
+        let reqwest_client = ReqwestClient::new();
 
-        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
 
         let generated_id = app_ctx.id_generator.next_id();
         assert_ne!(generated_id, "");
@@ -607,8 +624,9 @@ mod tests {
         let cfg = init_config().await;
         let shared_config = aws_config::load_from_env().await;
         let dynamodb_client = DynamodbClient::new(&shared_config);
+        let reqwest_client = ReqwestClient::new();
 
-        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/login").unwrap();
@@ -619,9 +637,250 @@ mod tests {
         assert_eq!(result.headers().get("location").unwrap(), "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fsolvastro.com%2Fauth%2Fcallback&prompt=consent&response_type=code&client_id=TEST_CLIENT_ID&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline");
     }
 
-    #[test]
-    fn get_user() {
-        // TODO
+    #[tokio::test]
+    async fn get_or_create_user_returns_matching_user_if_present() {
+        struct FakeIdentityRepository {}
+        #[async_trait]
+        impl IdentityRepository for FakeIdentityRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError> {
+                Ok(Some(Identity {
+                    id: "GOOG:ID_001".to_string(),
+                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string()
+                }))
+            }
+
+            async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                unimplemented!()
+            }
+        }
+        let identity_repo = FakeIdentityRepository {};
+
+        struct FakeUserRepository {}
+        #[async_trait]
+        impl UserRepository for FakeUserRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(if id == "MCBOB_BUTTERSCHNITZ_ID" {
+                    Some(User {
+                        id: "MCBOB_BUTTERSCHNITZ_ID".to_string(),
+                        name: "MCBOB BUTTERSCHNITZ".to_string(),
+                        email: "mcbob@butterschnitz.com".to_string(),
+                        role: Role::User
+                    })
+                } else {
+                    None
+                })
+            }
+
+            async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                unimplemented!()
+            }
+
+            async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                unimplemented!()
+            }
+        }
+        let user_repo = FakeUserRepository {};
+
+        let identity = GoogleIdentity {
+            name: "MCBOB BUTTERSCHNITZ".to_string(),
+            picture: ":-)".to_string(),
+            email: "mcbob@butterschnitz.com".to_string(),
+            id: "GOOG:ID_001".to_string(),
+            verified_email: false
+        };
+
+        let id_generator = StringGenerator::default();
+
+        let result = get_or_create_user(
+            identity,
+            &identity_repo,
+            &user_repo,
+            &id_generator
+        ).await.unwrap();
+
+        assert_eq!(result.id, "MCBOB_BUTTERSCHNITZ_ID");
+        assert_eq!(result.email, "mcbob@butterschnitz.com");
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_returns_identityusernotfounderror_if_id_found_but_no_user() {
+        struct FakeIdentityRepository {}
+        #[async_trait]
+        impl IdentityRepository for FakeIdentityRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError> {
+                Ok(Some(Identity {
+                    id: "GOOG:ID_001".to_string(),
+                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string()
+                }))
+            }
+
+            async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                unimplemented!()
+            }
+        }
+        let identity_repo = FakeIdentityRepository {};
+
+        struct FakeUserRepository {}
+        #[async_trait]
+        impl UserRepository for FakeUserRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                unimplemented!()
+            }
+
+            async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                unimplemented!()
+            }
+        }
+        let user_repo = FakeUserRepository {};
+
+        let identity = GoogleIdentity {
+            name: "MCBOB BUTTERSCHNITZ".to_string(),
+            picture: ":-)".to_string(),
+            email: "mcbob@butterschnitz.com".to_string(),
+            id: "GOOG:ID_001".to_string(),
+            verified_email: false
+        };
+
+        let id_generator = StringGenerator::default();
+
+        let result = get_or_create_user(
+            identity,
+            &identity_repo,
+            &user_repo,
+            &id_generator
+        ).await.err();
+
+        // TODO: explicitly check for AuthServiceError::IdentityUserNotFound
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_returns_user_and_inserts_identity_if_no_identity_but_user_with_same_email() {
+        struct FakeIdentityRepository {
+        }
+
+        #[async_trait]
+        impl IdentityRepository for FakeIdentityRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                Ok(PutItemOutput::builder().build())
+            }
+        }
+        let mut identity_repo = FakeIdentityRepository {};
+
+        struct FakeUserRepository {}
+        #[async_trait]
+        impl UserRepository for FakeUserRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(Some(User {
+                    id: "ID_NORMAN".to_string(),
+                    name: "Norman McDingleton".to_string(),
+                    email: "norman@gmail.com".to_string(),
+                    role: Role::User
+                }))
+            }
+
+            async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                unimplemented!()
+            }
+        }
+        let user_repo = FakeUserRepository {};
+
+        let identity = GoogleIdentity {
+            name: "Norman McDingleton".to_string(),
+            email: "norman@gmail.com".to_string(),
+            picture: ":-)".to_string(),
+            id: "GOOG:ID_002".to_string(),
+            verified_email: true
+        };
+
+        let id_generator = StringGenerator::default();
+
+        let result = get_or_create_user(
+            identity,
+            &identity_repo,
+            &user_repo,
+            &id_generator
+        ).await.unwrap();
+
+        assert_eq!(result.id, "ID_NORMAN");
+        // TODO: test identity actually inserted
+        //assert!(inserted);
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_inserts_user_and_identity_if_no_identity_or_user_found() {
+        struct FakeIdentityRepository {
+        }
+
+        #[async_trait]
+        impl IdentityRepository for FakeIdentityRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                Ok(PutItemOutput::builder().build())
+            }
+        }
+        let mut identity_repo = FakeIdentityRepository {};
+
+        struct FakeUserRepository {}
+        #[async_trait]
+        impl UserRepository for FakeUserRepository {
+            async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError> {
+                Ok(None)
+            }
+
+            async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+                Ok(PutItemOutput::builder().build())
+            }
+        }
+        let user_repo = FakeUserRepository {};
+
+        let identity = GoogleIdentity {
+            name: "Norman McDingleton".to_string(),
+            email: "norman@gmail.com".to_string(),
+            picture: ":-)".to_string(),
+            id: "GOOG:ID_002".to_string(),
+            verified_email: true
+        };
+
+        #[derive(Default)]
+        struct FakeIdGenerator {}
+        impl Generator<String> for FakeIdGenerator {
+            fn next_id(&self) -> String {
+                "ID_999".to_string()
+            }
+        }
+
+        let id_generator = FakeIdGenerator{};
+
+        let result = get_or_create_user(
+            identity,
+            &identity_repo,
+            &user_repo,
+            &id_generator
+        ).await.unwrap();
+
+        assert_eq!(result.id, "ID_999");
+        // TODO: test identity and user actually inserted
+        //assert!(inserted);
     }
 
     #[tokio::test]
@@ -632,8 +891,9 @@ mod tests {
         let cfg = init_config().await;
         let shared_config = aws_config::load_from_env().await;
         let dynamodb_client = DynamodbClient::new(&shared_config);
+        let reqwest_client = ReqwestClient::new();
 
-        let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
+        let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/some-weird-path").unwrap();
