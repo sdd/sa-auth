@@ -1,7 +1,6 @@
 use std::{env,fmt};
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use std::future::Future;
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
@@ -15,6 +14,7 @@ use lambda_http::{handler, lambda_runtime::{self, Error as LambdaError}, Request
 use lambda_http::http::{header,StatusCode};
 use lambda_http::lambda_runtime::Error;
 use reqwest::Client as ReqwestClient;
+use reqwest::Error as ReqwestError;
 use serde::{Deserialize,Serialize};
 use thiserror::Error as ThisError;
 use unique_id::Generator;
@@ -80,6 +80,9 @@ pub enum AuthServiceError {
 
     #[error("could not parse user from db")]
     DbUserParseError(#[from] UserParseError),
+
+    #[error("request error")]
+    RequestError(#[from] ReqwestError),
 }
 
 #[derive(Serialize, Debug)]
@@ -206,11 +209,10 @@ pub struct AppConfig {
 
 pub struct AppContext<'a> {
     cfg: AppConfig,
-    reqwest_client: ReqwestClient,
-    //dynamodb_client: DynamodbClient,
     id_generator: StringGenerator,
     identity_repository: DynamoDbIdentityRepository<'a>,
     user_repository: DynamoDbUserRepository<'a>,
+    google_oauth_provider: GoogleOAuthProvider<'a>,
 }
 
 // TODO: move to a GoogleStrategy library
@@ -221,16 +223,81 @@ struct GoogleOAuthConfig {
     identity_url: String,
 }
 
+#[async_trait]
+trait OAuthProvider {
+    fn get_login_url(&self) -> &str;
+    async fn get_token(&self, code: &str) -> Result<TokenResponse, AuthServiceError>;
+    async fn get_identity(&self, token: &str) -> Result<GoogleIdentity, AuthServiceError>;
+}
+
+struct GoogleOAuthProvider<'a> {
+    reqwest_client: &'a ReqwestClient,
+    client_id: String,
+    client_secret: String,
+    login_url: String,
+    token_url: String,
+    identity_url: String,
+}
+
+impl<'a> GoogleOAuthProvider<'a> {
+    pub fn new(reqwest_client: &'a ReqwestClient,  client_id: String, client_secret: String, token_url: String, identity_url: String, login_url: String) -> GoogleOAuthProvider {
+        GoogleOAuthProvider {
+            reqwest_client,
+            client_id,
+            client_secret,
+            login_url,
+            token_url,
+            identity_url
+        }
+    }
+}
+
+#[async_trait]
+impl OAuthProvider for GoogleOAuthProvider<'_> {
+    fn get_login_url(&self) -> &str {
+        &self.login_url
+    }
+
+    async fn get_token(&self, code: &str) -> Result<TokenResponse, AuthServiceError> {
+        let token_request = TokenRequest {
+            code,
+            client_id: &self.client_id,
+            client_secret: &self.client_secret,
+            redirect_uri: REDIRECT_URI,
+            grant_type: "authorization_code"
+        };
+
+        Ok(self.reqwest_client
+            .post(&self.token_url)
+            .form(&token_request)
+            .send()
+            .await?
+            .json::<TokenResponse>()
+            .await?)
+    }
+
+    async fn get_identity(&self, token: &str) -> Result<GoogleIdentity, AuthServiceError> {
+        Ok(self.reqwest_client
+            .get(&self.identity_url)
+            .bearer_auth(token)
+            .send()
+            .await?
+            .json::<GoogleIdentity>()
+            .await?)
+    }
+}
 
 #[async_trait]
 trait IdentityRepository {
     async fn get_by_id(&self, id: &str) -> Result<Option<Identity>, AuthServiceError>;
+    async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>>;
 }
 
 #[async_trait]
 trait UserRepository {
     async fn get_by_id(&self, id: &str) -> Result<Option<User>, AuthServiceError>;
     async fn get_by_email(&self, id: &str) -> Result<Option<User>, AuthServiceError>;
+    async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>>;
 }
 
 struct DynamoDbIdentityRepository<'a> {
@@ -259,6 +326,13 @@ impl IdentityRepository for DynamoDbIdentityRepository<'_> {
         } else {
             Ok(None)
         }
+    }
+    async fn insert(&self, identity: &Identity, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+        self.client.put_item()
+            .table_name(&self.table_name)
+            .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
+            .item("user_id", AttributeValue::S(String::from(&user.id)))
+            .send().await
     }
 }
 
@@ -293,6 +367,15 @@ impl UserRepository for DynamoDbUserRepository<'_> {
             Ok(None)
         }
     }
+
+    async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
+        self.client.put_item()
+            .table_name(&self.table_name)
+            .item("id", AttributeValue::S(String::from(&user.id)))
+            .item("name", AttributeValue::S(String::from(&user.name)))
+            .item("email", AttributeValue::S(String::from(&user.email)))
+            .send().await
+    }
 }
 
 async fn dynamodb_get_by_key(dynamodb_client: &DynamodbClient, table_name: &str, key: &str, val: &str) -> Result<Option<HashMap<String, AttributeValue>>, AuthServiceError> {
@@ -317,8 +400,9 @@ async fn main() -> Result<(), LambdaError> {
     let cfg: AppConfig = init_config().await;
     let shared_config = aws_config::load_from_env().await;
     let dynamodb_client = DynamodbClient::new(&shared_config);
+    let reqwest_client = ReqwestClient::new();
 
-    let app_ctx: AppContext = init_context(cfg, &dynamodb_client).await;
+    let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
     lambda_runtime::run(handler(|req, ctx| auth_handler(req, ctx, &app_ctx))).await?;
     Ok(())
 }
@@ -346,9 +430,9 @@ fn login_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Respons
 async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext<'_>) -> Result<Response<String>, Error> {
     let code: String = req.query_string_parameters().get("code").unwrap().to_string();
 
-    let token_response = get_oauth_token(&code, app_ctx).await?;
+    let token_response = app_ctx.google_oauth_provider.get_token(&code).await?;
     println!("Token Response: {:?}", &token_response);
-    let identity = get_oauth_identity(&app_ctx, &token_response).await?;
+    let identity = app_ctx.google_oauth_provider.get_identity(&token_response.access_token).await?;
 
     let user: User = get_or_create_user(identity, &app_ctx.identity_repository, &app_ctx.user_repository, &app_ctx.id_generator).await?;
     let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
@@ -361,36 +445,6 @@ fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<
         .status(StatusCode::NOT_FOUND)
         .body("404 Not Found".to_string())
         .unwrap())
-}
-
-// TODO: move to a GoogleStrategy library
-pub async fn get_oauth_identity(app_ctx: &AppContext<'_>, token_response: &TokenResponse) -> Result<GoogleIdentity, Error> {
-    Ok(app_ctx.reqwest_client
-        .get(&app_ctx.cfg.google_oauth_config.identity_url)
-        .bearer_auth(&token_response.access_token)
-        .send()
-        .await?
-        .json::<GoogleIdentity>()
-        .await?)
-}
-
-// TODO: move to a GoogleStrategy library
-pub async fn get_oauth_token(code: &str, app_ctx: &AppContext<'_>) -> Result<TokenResponse, Error> {
-    let token_request = TokenRequest {
-        code,
-        client_id: app_ctx.cfg.google_oauth_config.client_id.as_str(),
-        client_secret: app_ctx.cfg.google_oauth_config.client_secret.as_str(),
-        redirect_uri: REDIRECT_URI,
-        grant_type: "authorization_code"
-    };
-
-    Ok(app_ctx.reqwest_client
-        .post(&app_ctx.cfg.google_oauth_config.token_url)
-        .form(&token_request)
-        .send()
-        .await?
-        .json::<TokenResponse>()
-        .await?)
 }
 
 fn create_cookie_response(jwt: String) -> Response<String> {
@@ -407,9 +461,9 @@ fn create_cookie_response(jwt: String) -> Response<String> {
         .unwrap()
 }
 
-async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, id_repo: &I, user_repo: &U, id_generator: &StringGenerator) -> Result<User, AuthServiceError> {
+async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, identity_repo: &I, user_repo: &U, id_generator: &StringGenerator) -> Result<User, AuthServiceError> {
     // check to see if there is a corresponding entry in the identities table
-    if let Some(matching_identity) = id_repo.get_by_id(&identity.id).await? {
+    if let Some(matching_identity) = identity_repo.get_by_id(&identity.id).await? {
 
         // if there is, retrieve the matching user from the users table.
         if let Some(user) = user_repo.get_by_id(&matching_identity.user_id).await? {
@@ -434,30 +488,16 @@ async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: 
                 role: Role::User
             };
 
-            // TODO
-            //insert_new_user(app_ctx, &user).await?;
-            //insert_new_identity(app_ctx, &identity, &user).await?;
+            user_repo.insert(&user).await?;
+            let new_identity: Identity = Identity {
+                id: identity.id.clone(),
+                user_id: user.id.clone()
+            };
+            identity_repo.insert(&new_identity, &user).await?;
             Ok(user)
         }
     }
 }
-
-// fn insert_new_identity(app_ctx: &AppContext, identity: &GoogleIdentity, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
-//     app_ctx.dynamodb_client.put_item()
-//         .table_name(DYNAMODB_TABLE_IDENTITIES)
-//         .item("id", AttributeValue::S(format!("{}:{}", GOOGLE_IDENTITY_PREFIX, identity.id)))
-//         .item("user_id", AttributeValue::S(String::from(&user.id)))
-//         .send()
-// }
-
-// fn insert_new_user(app_ctx: &AppContext, user: &User) -> impl Future<Output=Result<PutItemOutput, SdkError<PutItemError>>> {
-//     app_ctx.dynamodb_client.put_item()
-//         .table_name(DYNAMODB_TABLE_USERS)
-//         .item("id", AttributeValue::S(String::from(&user.id)))
-//         .item("name", AttributeValue::S(String::from(&user.name)))
-//         .item("email", AttributeValue::S(String::from(&user.email)))
-//         .send()
-// }
 
 fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthServiceError> {
     let expiration = Utc::now()
@@ -502,19 +542,26 @@ async fn init_config() -> AppConfig {
     }
 }
 
-async fn init_context<'a>(cfg: AppConfig, dynamodb_client: &'a DynamodbClient) -> AppContext<'a> {
-    let reqwest_client = reqwest::Client::new();
+async fn init_context<'a>(cfg: AppConfig, dynamodb_client: &'a DynamodbClient, reqwest_client: &'a ReqwestClient) -> AppContext<'a> {
     let id_generator = StringGenerator::default();
 
+    let google_oauth_provider = GoogleOAuthProvider::new(
+        reqwest_client,
+        cfg.google_oauth_config.client_id.clone(),
+        cfg.google_oauth_config.client_secret.clone(),
+        cfg.google_oauth_config.token_url.clone(),
+        cfg.google_oauth_config.identity_url.clone(),
+        cfg.oauth_uri.clone(),
+    );
     let identity_repository = DynamoDbIdentityRepository::new(dynamodb_client);
     let user_repository = DynamoDbUserRepository::new(dynamodb_client);
 
     AppContext {
         cfg,
-        reqwest_client,
         id_generator,
         identity_repository,
         user_repository,
+        google_oauth_provider,
     }
 }
 
