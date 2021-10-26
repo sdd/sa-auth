@@ -9,6 +9,7 @@ keywords = ["AWS", "Lambda", "Auth", "OAuth"]
 [dependencies]
 async-trait = "0.1.51"
 aws-config = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-config" }
+aws-types = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-types" }
 aws-sdk-dynamodb = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-sdk-dynamodb" }
 chrono = "0.4"
 cookie = "0.15"
@@ -24,6 +25,7 @@ unique_id = "0.1"
 urlencoding = "2.1"
 
 [dev-dependencies]
+wiremock = "0.5"
 
 [profile.release]
 opt-level = "s"
