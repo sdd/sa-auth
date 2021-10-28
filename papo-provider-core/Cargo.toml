@@ -1,0 +1,25 @@
+[package]
+name = "papo-provider-core"
+version = "0.1.0"
+authors = ["Scott Donnelly"]
+edition = "2018"
+description = "traits for Papo providers"
+keywords = ["papo", "auth", "OAuth"]
+
+[dependencies]
+async-trait = "0.1.51"
+cookie = "0.15"
+jsonwebtoken = "7"
+log = "0.4"
+reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+tokio = "1"
+urlencoding = "2.1"
+
+[dev-dependencies]
+
+
+[lib]
+name = "papo_provider_core"
+path = "src/lib.rs"

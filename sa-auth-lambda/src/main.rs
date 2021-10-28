@@ -28,11 +28,6 @@ const AUTH_COOKIE_DOMAIN: &'static str = "solvastro.com";
 const AUTH_COOKIE_NAME: &'static str = "auth";
 const AUTH_COOKIE_PATH: &'static str = "/";
 
-// TODO: move to a GoogleStrategy library
-const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
-const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
-const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
-
 const DYNAMODB_TABLE_IDENTITIES: &'static str = "solvastro-identities";
 const DYNAMODB_TABLE_USERS: &'static str = "solvastro-users";
 
@@ -85,35 +80,6 @@ pub enum AuthServiceError {
     RequestError(#[from] ReqwestError),
 }
 
-#[derive(Serialize, Debug)]
-pub struct TokenRequest<'a> {
-    code: &'a str,
-    client_id: &'a str,
-    client_secret: &'a str,
-    redirect_uri: &'a str,
-    grant_type: &'a str,
-}
-
-#[derive(Deserialize, Debug)]
-#[cfg_attr(test, derive(Serialize))]
-pub struct TokenResponse {
-    access_token: String,
-    expires_in: u32,
-    token_type: String,
-    scope: String,
-    refresh_token: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[cfg_attr(test, derive(Serialize))]
-pub struct GoogleIdentity {
-    name: String,
-    picture: String,
-    email: String,
-    id: String,
-    verified_email: bool
-}
-
 #[derive(Deserialize, Debug)]
 pub struct Identity {
     id: String,
@@ -121,6 +87,7 @@ pub struct Identity {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+#[non_exhaustive]
 pub enum Role {
     User,
     Admin,
@@ -216,95 +183,6 @@ pub struct AppContext<'a> {
     identity_repository: DynamoDbIdentityRepository<'a>,
     user_repository: DynamoDbUserRepository<'a>,
     google_oauth_provider: GoogleOAuthProvider<'a>,
-}
-
-// TODO: move to a GoogleStrategy library
-#[derive(Debug)]
-struct GoogleOAuthConfig {
-    client_id: String,
-    client_secret: String,
-    token_url: String,
-    identity_url: String,
-}
-
-#[async_trait]
-trait OAuthProvider {
-    fn get_login_url(&self, redirect_url: &str) -> String;
-    async fn get_token(&self, code: &str) -> Result<TokenResponse, AuthServiceError>;
-    async fn get_identity(&self, token: &str) -> Result<GoogleIdentity, AuthServiceError>;
-}
-
-struct GoogleOAuthProvider<'a> {
-    reqwest_client: &'a ReqwestClient,
-    client_id: String,
-    client_secret: String,
-    token_url: String,
-    identity_url: String,
-}
-
-impl<'a> GoogleOAuthProvider<'a> {
-    pub fn new(reqwest_client: &'a ReqwestClient, client_id: String, client_secret: String) -> GoogleOAuthProvider {
-        GoogleOAuthProvider {
-            reqwest_client,
-            client_id,
-            client_secret,
-            token_url: GOOGLE_ENDPOINT_TOKEN.to_string(),
-            identity_url: GOOGLE_ENDPOINT_IDENTITY.to_string(),
-        }
-    }
-
-    pub fn with_token_url(self, token_url: String) -> Self {
-        GoogleOAuthProvider {
-            token_url,
-            ..self
-        }
-    }
-
-    pub fn with_identity_url(self, identity_url: String) -> Self {
-        GoogleOAuthProvider {
-            identity_url,
-            ..self
-        }
-    }
-}
-
-#[async_trait]
-impl OAuthProvider for GoogleOAuthProvider<'_> {
-    fn get_login_url(&self, redirect_url: &str) -> String {
-        format!(
-            "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri={}&prompt=consent&response_type=code&client_id={}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline",
-            urlencoding::encode(redirect_url),
-            self.client_id
-        )
-    }
-
-    async fn get_token(&self, code: &str) -> Result<TokenResponse, AuthServiceError> {
-        let token_request = TokenRequest {
-            code,
-            client_id: &self.client_id,
-            client_secret: &self.client_secret,
-            redirect_uri: REDIRECT_URI,
-            grant_type: "authorization_code"
-        };
-
-        Ok(self.reqwest_client
-            .post(&self.token_url)
-            .form(&token_request)
-            .send()
-            .await?
-            .json::<TokenResponse>()
-            .await?)
-    }
-
-    async fn get_identity(&self, token: &str) -> Result<GoogleIdentity, AuthServiceError> {
-        Ok(self.reqwest_client
-            .get(&self.identity_url)
-            .bearer_auth(token)
-            .send()
-            .await?
-            .json::<GoogleIdentity>()
-            .await?)
-    }
 }
 
 #[async_trait]
@@ -909,87 +787,6 @@ mod tests {
 
         let result = not_found_handler(req, ctx, &app_ctx).unwrap();
         assert_eq!(result.status(), 404);
-    }
-
-    #[tokio::test]
-    async fn test_google_oauth_provider_get_identity_works() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
-        use wiremock::matchers::{method, header, path};
-        let mock_server = MockServer::start().await;
-
-        let mock_identity = GoogleIdentity {
-            name: "TEST_GOOG_NAME".to_string(),
-            picture: ":-)".to_string(),
-            email: "TEST_GOOG_EMAIL".to_string(),
-            id: "TEST_GOOG_ID".to_string(),
-            verified_email: false
-        };
-
-        Mock::given(method("GET"))
-            .and(path("/get-id"))
-            .and(header("Authorization", "Bearer TEST_TOKEN"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(mock_identity))
-            .mount(&mock_server)
-            .await;
-
-        let reqwest_client = ReqwestClient::default();
-
-        let client_id = "FAKE_ID";
-        let client_secret = "FAKE_SECRET";
-        let provider = GoogleOAuthProvider::new(
-            &reqwest_client,
-            client_id.into(),
-            client_secret.into()
-        ).with_identity_url(format!("{}/get-id", mock_server.uri()));
-
-
-        let token = "TEST_TOKEN";
-        let result = provider.get_identity(token).await.unwrap();
-
-        assert_eq!(result.id, "TEST_GOOG_ID");
-    }
-
-    #[tokio::test]
-    async fn test_google_oauth_provider_get_oauth_token_works() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
-        use wiremock::matchers::{method, body_string, path};
-        let mock_server = MockServer::start().await;
-
-        let expected_body = TokenRequest{
-            code: "TEST_CODE",
-            client_id: "FAKE_ID",
-            client_secret: "FAKE_SECRET",
-            redirect_uri: REDIRECT_URI,
-            grant_type: "authorization_code"
-        };
-
-        let mock_token_response = TokenResponse{
-            access_token: "A_TOKEN".to_string(),
-            expires_in: 1000,
-            token_type: "TEST".to_string(),
-            scope: "TEST_SCOPE".to_string(),
-            refresh_token: "R_TOKEN".to_string()
-        };
-
-        Mock::given(method("POST"))
-            .and(path("/get-token"))
-            // TODO
-            //.and(body_string("code=TEST_CODE"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(mock_token_response))
-            .mount(&mock_server)
-            .await;
-
-        let reqwest_client = ReqwestClient::default();
-        let provider = GoogleOAuthProvider::new(
-            &reqwest_client,
-            "FAKE_ID".into(),
-            "FAKE_SECRET".into()
-        ).with_token_url(format!("{}/get-token", mock_server.uri()));
-
-        let code = "TEST_CODE";
-        let result = provider.get_token(code).await.unwrap();
-
-        assert_eq!(result.access_token, "A_TOKEN");
     }
 
     #[test]
