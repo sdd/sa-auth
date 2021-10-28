@@ -84,7 +84,6 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use super::*;
 
     #[tokio::test]
@@ -129,10 +128,10 @@ mod tests {
     #[tokio::test]
     async fn test_google_oauth_provider_get_oauth_token_works() {
         use wiremock::{MockServer, Mock, ResponseTemplate};
-        use wiremock::matchers::{method, body_string, path};
+        use wiremock::matchers::{method, path};
         let mock_server = MockServer::start().await;
 
-        let expected_body = TokenRequest{
+        let _expected_body = TokenRequest{
             code: "TEST_CODE",
             client_id: "FAKE_ID",
             client_secret: "FAKE_SECRET",
