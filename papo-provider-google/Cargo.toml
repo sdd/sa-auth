@@ -1,0 +1,26 @@
+[package]
+name = "papo-provider-google"
+version = "0.1.0"
+authors = ["Scott Donnelly"]
+edition = "2018"
+description = "Google provider for Papo"
+keywords = ["AWS", "Lambda", "Auth", "OAuth"]
+
+[dependencies]
+papo-provider-core = { path = "../papo-provider-core" }
+async-trait = "0.1.51"
+chrono = "0.4"
+log = "0.4"
+reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+unique_id = "0.1"
+urlencoding = "2.1"
+
+[dev-dependencies]
+wiremock = "0.5"
+tokio = { version = "1", features = ["macros"] }
+
+[lib]
+name = "papo_provider_google"
+path = "src/lib.rs"
