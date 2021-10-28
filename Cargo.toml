@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-    "auth-model",
+    "sa-auth-model",
     "papo-provider-core",
     "papo-provider-google",
     "sa-auth-lambda",

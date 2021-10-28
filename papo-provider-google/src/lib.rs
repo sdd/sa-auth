@@ -7,16 +7,7 @@ pub const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/t
 pub const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
 pub const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
 
-#[derive(Debug)]
-pub struct GoogleOAuthConfig {
-    client_id: String,
-    client_secret: String,
-    token_url: String,
-    identity_url: String,
-    redirect_url: String,
-}
-
-struct GoogleOAuthProvider<'a> {
+pub struct GoogleOAuthProvider<'a> {
     reqwest_client: &'a ReqwestClient,
     client_id: String,
     client_secret: String,
