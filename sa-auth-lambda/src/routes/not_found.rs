@@ -1,8 +1,6 @@
 use std::env;
-use aws_sdk_dynamodb::{Client as DynamodbClient};
 use lambda_http::{Context, Request, Response};
 use lambda_http::http::{StatusCode};
-use reqwest::Client as ReqwestClient;
 
 use crate::context::AppContext;
 use crate::Error;
@@ -19,8 +17,8 @@ mod tests {
     use std::str::FromStr;
     use lambda_http::http::Uri;
 
-    use crate::config::init_config;
-    use crate::context::init_context;
+    use crate::config::AppConfig;
+    use crate::context::AppContext;
     use crate::routes::not_found::not_found_handler;
 
     use super::*;
@@ -30,12 +28,8 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
-        let cfg = init_config().await;
-        let shared_config = aws_config::load_from_env().await;
-        let dynamodb_client = DynamodbClient::new(&shared_config);
-        let reqwest_client = ReqwestClient::new();
-
-        let app_ctx: AppContext = init_context(cfg, &dynamodb_client, &reqwest_client).await;
+        let cfg = AppConfig::new();
+        let app_ctx = AppContext::new(cfg).await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/some-weird-path").unwrap();

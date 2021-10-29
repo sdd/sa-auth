@@ -15,34 +15,35 @@ pub struct AppConfig {
     pub jwt_secret: String,
 }
 
-pub async fn init_config() -> AppConfig {
-    let jwt_secret = env::var("JWT_SECRET").expect("Missing JWT_SECRET env var");
-    let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
-    let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
+impl AppConfig {
+    pub fn new() -> AppConfig {
+        let jwt_secret = env::var("JWT_SECRET").expect("Missing JWT_SECRET env var");
+        let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
+        let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
 
-    let google_oauth_config = GoogleOAuthConfig {
-        client_id,
-        client_secret,
-        redirect_url: REDIRECT_URI.into(),
-    };
+        let google_oauth_config = GoogleOAuthConfig {
+            client_id,
+            client_secret,
+            redirect_url: REDIRECT_URI.into(),
+        };
 
-    AppConfig {
-        google_oauth_config,
-        jwt_secret,
+        AppConfig {
+            google_oauth_config,
+            jwt_secret,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::init_config;
     use super::*;
 
-    #[tokio::test]
-    async fn init_config_returns_a_working_config() {
+    #[test]
+    fn init_config_returns_a_working_config() {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
-        let result = init_config().await;
+        let result = AppConfig::new();
 
         assert_eq!(result.google_oauth_config.client_id, "TEST_CLIENT_ID");
         assert_eq!(result.google_oauth_config.client_secret, "TEST_CLIENT_SECRET");

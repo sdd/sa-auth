@@ -15,17 +15,17 @@ use crate::{AUTH_COOKIE_DOMAIN, AUTH_COOKIE_NAME, AUTH_COOKIE_PATH};
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
 
-pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext<'_>) -> Result<Response<String>, Error> {
+pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
     if let Some(code) = req.query_string_parameters().get("code") {
         let code = code.to_string();
 
-        let provider = &app_ctx.google_oauth_provider;
+        let provider = &app_ctx.google_oauth_provider();
 
         let token_response = provider.get_token(&code).await?;
         println!("Token Response: {:?}", &token_response);
         let identity = provider.get_identity(&token_response.access_token).await?;
 
-        let user: User = get_or_create_user(identity, &app_ctx.identity_repository, &app_ctx.user_repository, &app_ctx.id_generator).await?;
+        let user: User = get_or_create_user(identity, &app_ctx.identity_repository(), &app_ctx.user_repository(), &app_ctx.id_generator).await?;
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
         Ok(create_cookie_response(jwt))
