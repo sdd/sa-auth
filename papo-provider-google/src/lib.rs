@@ -9,33 +9,33 @@ pub const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
 
 pub struct GoogleOAuthProvider<'a> {
     reqwest_client: &'a ReqwestClient,
-    client_id: String,
-    client_secret: String,
-    token_url: String,
-    identity_url: String,
-    redirect_url: String,
+    client_id: &'a str,
+    client_secret: &'a str,
+    token_url: &'a str,
+    identity_url: &'a str,
+    redirect_url: &'a str,
 }
 
 impl<'a> GoogleOAuthProvider<'a> {
-    pub fn new(reqwest_client: &'a ReqwestClient, client_id: String, client_secret: String, redirect_url: String) -> GoogleOAuthProvider {
+    pub fn new(reqwest_client: &'a ReqwestClient, client_id: &'a str, client_secret: &'a str, redirect_url: &'a str) -> GoogleOAuthProvider<'a> {
         GoogleOAuthProvider {
             reqwest_client,
             client_id,
             client_secret,
-            token_url: GOOGLE_ENDPOINT_TOKEN.to_string(),
-            identity_url: GOOGLE_ENDPOINT_IDENTITY.to_string(),
+            token_url: GOOGLE_ENDPOINT_TOKEN,
+            identity_url: GOOGLE_ENDPOINT_IDENTITY,
             redirect_url,
         }
     }
 
-    pub fn with_token_url(self, token_url: String) -> Self {
+    pub fn with_token_url(self, token_url: &'a str) -> Self {
         GoogleOAuthProvider {
             token_url,
             ..self
         }
     }
 
-    pub fn with_identity_url(self, identity_url: String) -> Self {
+    pub fn with_identity_url(self, identity_url: &'a str) -> Self {
         GoogleOAuthProvider {
             identity_url,
             ..self
@@ -63,7 +63,7 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
         };
 
         Ok(self.reqwest_client
-            .post(&self.token_url)
+            .post(self.token_url)
             .form(&token_request)
             .send()
             .await?
@@ -73,7 +73,7 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
 
     async fn get_identity(&self, token: &str) -> Result<Identity, PapoProviderError> {
         Ok(self.reqwest_client
-            .get(&self.identity_url)
+            .get(self.identity_url)
             .bearer_auth(token)
             .send()
             .await?
@@ -116,7 +116,7 @@ mod tests {
             client_id.into(),
             client_secret.into(),
             "REDIR_URL".into(),
-        ).with_identity_url(format!("{}/get-id", mock_server.uri()));
+        ).with_identity_url(&format!("{}/get-id", mock_server.uri()));
 
 
         let token = "TEST_TOKEN";
@@ -161,7 +161,7 @@ mod tests {
             "FAKE_ID".into(),
             "FAKE_SECRET".into(),
             "REDIR_URL".into(),
-        ).with_token_url(format!("{}/get-token", mock_server.uri()));
+        ).with_token_url(&format!("{}/get-token", mock_server.uri()));
 
         let code = "TEST_CODE";
         let result = provider.get_token(code).await.unwrap();
