@@ -111,13 +111,13 @@ mod tests {
 
         let client_id = "FAKE_ID";
         let client_secret = "FAKE_SECRET";
+        let identity_url = format!("{}/get-id", mock_server.uri());
         let provider = GoogleOAuthProvider::new(
             &reqwest_client,
             client_id.into(),
             client_secret.into(),
             "REDIR_URL".into(),
-        ).with_identity_url(&format!("{}/get-id", mock_server.uri()));
-
+        ).with_identity_url(&identity_url);
 
         let token = "TEST_TOKEN";
         let result = provider.get_identity(token).await.unwrap();
@@ -156,12 +156,13 @@ mod tests {
             .await;
 
         let reqwest_client = ReqwestClient::default();
+        let token_url = format!("{}/get-token", mock_server.uri());
         let provider = GoogleOAuthProvider::new(
             &reqwest_client,
             "FAKE_ID".into(),
             "FAKE_SECRET".into(),
             "REDIR_URL".into(),
-        ).with_token_url(&format!("{}/get-token", mock_server.uri()));
+        ).with_token_url(&token_url);
 
         let code = "TEST_CODE";
         let result = provider.get_token(code).await.unwrap();
