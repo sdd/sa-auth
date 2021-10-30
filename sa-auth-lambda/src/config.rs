@@ -1,7 +1,5 @@
 use std::env;
 
-use crate::REDIRECT_URI;
-
 #[derive(Debug)]
 pub struct GoogleOAuthConfig {
     pub client_id: String,
@@ -13,6 +11,9 @@ pub struct GoogleOAuthConfig {
 pub struct AppConfig {
     pub google_oauth_config: GoogleOAuthConfig,
     pub jwt_secret: String,
+    pub auth_cookie_domain: String,
+    pub auth_cookie_name: String,
+    pub auth_cookie_path: String,
 }
 
 impl AppConfig {
@@ -20,16 +21,23 @@ impl AppConfig {
         let jwt_secret = env::var("JWT_SECRET").expect("Missing JWT_SECRET env var");
         let client_id = env::var("GOOGLE_CLIENT_ID").expect("Missing GOOGLE_CLIENT_ID env var");
         let client_secret = env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
+        let redirect_url = env::var("REDIRECT_URL").expect("Missing REDIRECT_URL env var");
+        let auth_cookie_domain = env::var("AUTH_COOKIE_DOMAIN").expect("Missing AUTH_COOKIE_DOMAIN env var");
+        let auth_cookie_name = env::var("AUTH_COOKIE_NAME").expect("Missing AUTH_COOKIE_NAME env var");
+        let auth_cookie_path = env::var("AUTH_COOKIE_PATH").expect("Missing AUTH_COOKIE_PATH env var");
 
         let google_oauth_config = GoogleOAuthConfig {
             client_id,
             client_secret,
-            redirect_url: REDIRECT_URI.into(),
+            redirect_url,
         };
 
         AppConfig {
             google_oauth_config,
             jwt_secret,
+            auth_cookie_domain,
+            auth_cookie_name,
+            auth_cookie_path
         }
     }
 }
@@ -43,10 +51,19 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        env::set_var("REDIRECT_URL", "test.local/auth/callback");
+        env::set_var("AUTH_COOKIE_DOMAIN", "test.local");
+        env::set_var("AUTH_COOKIE_NAME", "sa-auth");
+        env::set_var("AUTH_COOKIE_PATH", "/");
+
         let result = AppConfig::new();
 
         assert_eq!(result.google_oauth_config.client_id, "TEST_CLIENT_ID");
         assert_eq!(result.google_oauth_config.client_secret, "TEST_CLIENT_SECRET");
         assert_eq!(result.jwt_secret, "TEST_JWT_SECRET");
+        assert_eq!(result.google_oauth_config.redirect_url, "test.local/auth/callback");
+        assert_eq!(result.auth_cookie_domain, "test.local");
+        assert_eq!(result.auth_cookie_name, "sa-auth");
+        assert_eq!(result.auth_cookie_path, "/");
     }
 }

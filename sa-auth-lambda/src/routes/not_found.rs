@@ -28,6 +28,10 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        env::set_var("REDIRECT_URL", "test.local/auth/callback");
+        env::set_var("AUTH_COOKIE_DOMAIN", "test.local");
+        env::set_var("AUTH_COOKIE_NAME", "sa-auth");
+        env::set_var("AUTH_COOKIE_PATH", "/");
         let cfg = AppConfig::new();
         let app_ctx = AppContext::new(cfg).await;
 
