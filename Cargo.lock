@@ -1455,6 +1455,7 @@ dependencies = [
  "reqwest",
  "sa-auth-model",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "unique_id",

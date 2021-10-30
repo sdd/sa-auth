@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-
 use chrono::Utc;
 use cookie::Cookie;
-use jsonwebtoken::{Algorithm, encode, EncodingKey, Header};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use lambda_http::{Context, Request, RequestExt, Response};
 use lambda_http::http::StatusCode;
 use lambda_http::lambda_runtime::Error;
@@ -107,9 +106,9 @@ pub fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthS
         exp: expiration as usize,
     };
 
-    let header = Header::new(Algorithm::HS512);
+    let header = Header::default();
 
-    encode(&header, &claims, &EncodingKey::from_secret(secret.as_ref()))
+    encode(&header, &claims, &EncodingKey::from_secret(secret))
         .map_err(|_| AuthServiceError::JWTCreationError)
 }
 
@@ -136,6 +135,7 @@ mod tests {
                 }))
             }
 
+            #[no_coverage]
             async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -158,10 +158,12 @@ mod tests {
                 })
             }
 
+            #[no_coverage]
             async fn get_by_email(&self, _: &str) -> Result<Option<User>, ModelError> {
                 unimplemented!()
             }
 
+            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -201,6 +203,7 @@ mod tests {
                 }))
             }
 
+            #[no_coverage]
             async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -214,10 +217,12 @@ mod tests {
                 Ok(None)
             }
 
+            #[no_coverage]
             async fn get_by_email(&self, _: &str) -> Result<Option<User>, ModelError> {
                 unimplemented!()
             }
 
+            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -278,6 +283,7 @@ mod tests {
                 }))
             }
 
+            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -379,7 +385,7 @@ mod tests {
 
         let jwt = create_jwt(uid, &role, jwt_secret).unwrap();
 
-        let expected = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9";
+        let expected = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9";
         assert_eq!(jwt.split('.').collect::<Vec<_>>()[0], expected);
     }
 
@@ -389,7 +395,7 @@ mod tests {
         let result = create_cookie_response(jwt).into_parts();
 
         assert_eq!(result.0.status, 200);
-        assert_eq!(result.0.headers.get("set-cookie").unwrap(), "auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");
+        assert_eq!(result.0.headers.get("set-cookie").unwrap(), "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");
         assert_eq!(result.1, "");
     }
 }

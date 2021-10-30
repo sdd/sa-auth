@@ -1,8 +1,6 @@
 use std::env;
-
 use aws_sdk_dynamodb::Client as DynamodbClient;
 use reqwest::Client as ReqwestClient;
-use unique_id::Generator;
 use unique_id::string::StringGenerator;
 use papo_provider_google::GoogleOAuthProvider;
 use sa_auth_model::{DynamoDbIdentityRepository, DynamoDbUserRepository};
@@ -49,8 +47,8 @@ impl AppContext {
 
 #[cfg(test)]
 mod tests {
+    use unique_id::Generator;
     use crate::config::AppConfig;
-    use crate::context::AppContext;
     use super::*;
 
     #[tokio::test]
