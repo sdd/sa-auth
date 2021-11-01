@@ -8,6 +8,7 @@ use sa_auth_model::{DynamoDbIdentityRepository, DynamoDbUserRepository};
 use crate::config::AppConfig;
 use crate::REDIRECT_URI;
 
+#[derive(Debug)]
 pub struct AppContext {
     pub cfg: AppConfig,
     pub id_generator: StringGenerator,

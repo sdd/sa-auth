@@ -19,8 +19,11 @@ const AUTH_COOKIE_PATH: &'static str = "/";
 #[no_coverage]
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
+    println!("ENTRYPOINT");
     let cfg = AppConfig::new();
+    println!("Config: {:?}", &cfg);
     let app_ctx = AppContext::new(cfg).await;
+    println!("AppContext: {:?}", &app_ctx);
 
     lambda_runtime::run(handler(|req, ctx| auth_handler(req, ctx, &app_ctx))).await?;
     Ok(())
@@ -31,6 +34,7 @@ async fn auth_handler(
     ctx: Context,
     app_ctx: &AppContext,
 ) -> Result<Response<String>, LambdaError> {
+    println!("Request: {:?}", &request);
     match request.uri().path() {
         "/auth/login" => login::login_handler(request, ctx, app_ctx),
         "/auth/logout" => logout::logout_handler(request, ctx, app_ctx),
