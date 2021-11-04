@@ -1,4 +1,3 @@
-use std::env;
 use lambda_http::{Context, Request, Response};
 use lambda_http::http::{StatusCode};
 
@@ -14,6 +13,7 @@ pub fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Respo
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::str::FromStr;
     use lambda_http::http::Uri;
 

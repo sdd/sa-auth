@@ -1,4 +1,3 @@
-use std::env;
 use aws_sdk_dynamodb::Client as DynamodbClient;
 use reqwest::Client as ReqwestClient;
 use unique_id::string::StringGenerator;
@@ -48,6 +47,7 @@ impl AppContext {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use unique_id::Generator;
     use crate::config::AppConfig;
     use super::*;

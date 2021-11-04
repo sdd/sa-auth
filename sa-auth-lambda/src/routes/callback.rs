@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use chrono::Utc;
 use cookie::Cookie;
 use jsonwebtoken::{encode, EncodingKey, Header};
@@ -114,6 +113,7 @@ pub fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthS
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use aws_sdk_dynamodb::error::PutItemError;
     use aws_sdk_dynamodb::output::PutItemOutput;
     use aws_sdk_dynamodb::SdkError;
@@ -135,7 +135,6 @@ mod tests {
                 }))
             }
 
-            #[no_coverage]
             async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -158,12 +157,10 @@ mod tests {
                 })
             }
 
-            #[no_coverage]
             async fn get_by_email(&self, _: &str) -> Result<Option<User>, ModelError> {
                 unimplemented!()
             }
 
-            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -203,7 +200,6 @@ mod tests {
                 }))
             }
 
-            #[no_coverage]
             async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -217,12 +213,10 @@ mod tests {
                 Ok(None)
             }
 
-            #[no_coverage]
             async fn get_by_email(&self, _: &str) -> Result<Option<User>, ModelError> {
                 unimplemented!()
             }
 
-            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
@@ -283,7 +277,6 @@ mod tests {
                 }))
             }
 
-            #[no_coverage]
             async fn insert(&self, _: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }

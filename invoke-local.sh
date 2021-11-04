@@ -3,5 +3,5 @@ aws lambda invoke \
  --region us-east-1 \
  --no-sign-request \
  --function-name sa-auth \
- --payload '{"httpMethod":"GET","path":"/auth/login","queryStringParameters":{},"headers":{},"isBase64Encoded":false,"body":""}' \
+ --payload file://test-alb-payload.json \
  output.json

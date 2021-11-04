@@ -2,7 +2,7 @@
 name = "sa-auth"
 version = "0.1.0"
 authors = ["Scott Donnelly <scott@donnel.ly>"]
-edition = "2021"
+edition = "2018"
 description = "Authentication lambda for web apps"
 keywords = ["AWS", "Lambda", "Auth", "OAuth"]
 autobins = false

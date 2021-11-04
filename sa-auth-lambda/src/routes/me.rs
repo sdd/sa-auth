@@ -1,4 +1,3 @@
-use std::env;
 use jsonwebtoken::{decode, Validation, DecodingKey};
 use lambda_http::{Context, Request, Response};
 use lambda_http::http::{StatusCode, header};
@@ -49,6 +48,7 @@ pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Resp
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::str::FromStr;
     use lambda_http::http::{Uri};
 
