@@ -1,4 +1,3 @@
-use std::env;
 use cookie::Cookie;
 use lambda_http::{Context, Request, Response};
 use lambda_http::http::{header, StatusCode};
@@ -23,6 +22,7 @@ pub fn logout_handler(_: Request, _: Context, _: &AppContext) -> Result<Response
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::str::FromStr;
     use lambda_http::http::Uri;
 

@@ -1,4 +1,3 @@
-#![feature(no_coverage)]
 mod config;
 mod context;
 mod error;
@@ -16,7 +15,6 @@ const AUTH_COOKIE_DOMAIN: &'static str = "solvastro.com";
 const AUTH_COOKIE_NAME: &'static str = "sa-auth";
 const AUTH_COOKIE_PATH: &'static str = "/";
 
-#[no_coverage]
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
     println!("ENTRYPOINT");
