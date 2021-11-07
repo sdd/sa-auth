@@ -1,11 +1,10 @@
 use aws_sdk_dynamodb::Client as DynamodbClient;
-use reqwest::Client as ReqwestClient;
-use unique_id::string::StringGenerator;
 use papo_provider_google::GoogleOAuthProvider;
+use reqwest::Client as ReqwestClient;
 use sa_auth_model::{DynamoDbIdentityRepository, DynamoDbUserRepository};
+use unique_id::string::StringGenerator;
 
 use crate::config::AppConfig;
-use crate::REDIRECT_URI;
 
 #[derive(Debug)]
 pub struct AppContext {
@@ -33,7 +32,12 @@ impl AppContext {
     }
 
     pub fn google_oauth_provider(&self) -> GoogleOAuthProvider {
-        GoogleOAuthProvider::new(&self.reqwest_client, &self.cfg.google_oauth_config.client_id, &self.cfg.google_oauth_config.client_secret, REDIRECT_URI)
+        GoogleOAuthProvider::new(
+            &self.reqwest_client,
+            &self.cfg.google_oauth_config.client_id,
+            &self.cfg.google_oauth_config.client_secret,
+            &self.cfg.google_oauth_config.redirect_url,
+        )
     }
 
     pub fn identity_repository(&self) -> DynamoDbIdentityRepository {
@@ -47,16 +51,17 @@ impl AppContext {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::config::AppConfig;
     use std::env;
     use unique_id::Generator;
-    use crate::config::AppConfig;
-    use super::*;
 
     #[tokio::test]
     async fn init_context_returns_a_working_context() {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        env::set_var("REDIRECT_URL", "https://localhost/redir");
         let cfg = AppConfig::new();
         let app_ctx: AppContext = AppContext::new(cfg).await;
 

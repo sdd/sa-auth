@@ -10,13 +10,14 @@ use crate::config::AppConfig;
 use crate::context::AppContext;
 use crate::routes::{callback, login, logout, me, not_found};
 
-const REDIRECT_URI: &'static str = "https://solvastro.com/auth/callback";
 const AUTH_COOKIE_DOMAIN: &'static str = "solvastro.com";
 const AUTH_COOKIE_NAME: &'static str = "sa-auth";
 const AUTH_COOKIE_PATH: &'static str = "/";
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
+    simple_logger::init_with_env().unwrap();
+    
     println!("ENTRYPOINT");
     let cfg = AppConfig::new();
     println!("Config: {:?}", &cfg);
