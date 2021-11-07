@@ -250,6 +250,7 @@ impl UserRepository for DynamoDbUserRepository<'_> {
             .item("id", AttributeValue::S(String::from(&user.id)))
             .item("name", AttributeValue::S(String::from(&user.name)))
             .item("email", AttributeValue::S(String::from(&user.email)))
+            .item("role", AttributeValue::S(format!("{:?}", &user.role)))
             .send().await
     }
 }
