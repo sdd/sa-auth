@@ -9,24 +9,21 @@ use unique_id::Generator;
 use papo_provider_core::{Identity as GoogleIdentity, OAuthProvider};
 use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User, UserRepository};
 
-use crate::{AUTH_COOKIE_DOMAIN, AUTH_COOKIE_NAME, AUTH_COOKIE_PATH};
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
 
 pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
     if let Some(code) = req.query_string_parameters().get("code") {
         let code = code.to_string();
-
         let provider = &app_ctx.google_oauth_provider();
 
         let token_response = provider.get_token(&code).await?;
-        println!("Token Response: {:?}", &token_response);
         let identity = provider.get_identity(&token_response.access_token).await?;
 
         let user: User = get_or_create_user(identity, &app_ctx.identity_repository(), &app_ctx.user_repository(), &app_ctx.id_generator).await?;
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
-        Ok(create_cookie_response(jwt))
+        Ok(create_cookie_response(jwt, &app_ctx.cfg.auth_cookie_domain, &app_ctx.cfg.auth_cookie_name, &app_ctx.cfg.auth_cookie_path))
     } else {
         Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -35,10 +32,10 @@ pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) ->
     }
 }
 
-pub fn create_cookie_response(jwt: String) -> Response<String> {
-    let cookie = Cookie::build(AUTH_COOKIE_NAME, jwt)
-        .domain(AUTH_COOKIE_DOMAIN)
-        .path(AUTH_COOKIE_PATH)
+pub fn create_cookie_response(jwt: String, auth_cookie_domain: &str, auth_cookie_name: &str, auth_cookie_path: &str) -> Response<String> {
+    let cookie = Cookie::build(auth_cookie_name, jwt)
+        .domain(auth_cookie_domain)
+        .path(auth_cookie_path)
         .http_only(true)
         .finish();
 
@@ -385,7 +382,7 @@ mod tests {
     #[test]
     fn create_cookie_response_gives_a_well_formed_cookie() {
         let jwt = "A_JWT".to_string();
-        let result = create_cookie_response(jwt).into_parts();
+        let result = create_cookie_response(jwt, "solvastro.com", "sa-auth", "/").into_parts();
 
         assert_eq!(result.0.status, 200);
         assert_eq!(result.0.headers.get("set-cookie").unwrap(), "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");

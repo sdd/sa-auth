@@ -3,13 +3,12 @@ use lambda_http::{Context, Request, Response};
 use lambda_http::http::{header, StatusCode};
 
 use crate::context::AppContext;
-use crate::{AUTH_COOKIE_NAME, AUTH_COOKIE_DOMAIN, AUTH_COOKIE_PATH};
 use crate::Error;
 
-pub fn logout_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<String>, Error> {
-    let cookie = Cookie::build(AUTH_COOKIE_NAME, "")
-        .domain(AUTH_COOKIE_DOMAIN)
-        .path(AUTH_COOKIE_PATH)
+pub fn logout_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+    let cookie = Cookie::build(&app_ctx.cfg.auth_cookie_name, "")
+        .domain(&app_ctx.cfg.auth_cookie_domain)
+        .path(&app_ctx.cfg.auth_cookie_path)
         .http_only(true)
         .finish();
 
@@ -35,6 +34,9 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
+        env::set_var("AUTH_COOKIE_NAME", "auth");
+        env::set_var("AUTH_COOKIE_PATH", "/");
         let cfg = AppConfig::new();
         let app_ctx = AppContext::new(cfg).await;
 
@@ -46,7 +48,7 @@ mod tests {
         println!("result: {:?}", &result);
         assert_eq!(result.status(), StatusCode::OK);
 
-        let expected = format!("{}=; HttpOnly; Path={}; Domain={}", AUTH_COOKIE_NAME, AUTH_COOKIE_PATH, AUTH_COOKIE_DOMAIN);
+        let expected = format!("{}=; HttpOnly; Path={}; Domain={}", &app_ctx.cfg.auth_cookie_name, &app_ctx.cfg.auth_cookie_path, &app_ctx.cfg.auth_cookie_domain);
         assert_eq!(result.headers().get(header::SET_COOKIE).unwrap(), &expected);
     }
 }
