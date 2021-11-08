@@ -1,4 +1,8 @@
 plugins:
   - '@semantic-release/commit-analyzer'
   - '@semantic-release/release-notes-generator'
-  - '@semantic-release/github'
+  - '@semantic-release/github':
+    assets:
+      - path: 'lambda-x86_64.zip'
+        label: 'x86_64'
+

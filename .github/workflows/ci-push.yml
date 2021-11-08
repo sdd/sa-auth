@@ -10,6 +10,8 @@ jobs:
       matrix:
         toolchain:
           - nightly
+        target:
+          - x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v2
         name: Check out
@@ -18,6 +20,7 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
+          target: ${{ matrix.target }}
           override: true
           components: clippy, rustfmt
       - uses: actions-rs/cargo@v1
@@ -34,6 +37,8 @@ jobs:
         name: Build (Debug)
         with:
           command: build
+          use-cross: true
+          args: --target ${{ matrix.target }}
       - name: Clippy
         uses: actions-rs/clippy-check@v1
         with:
