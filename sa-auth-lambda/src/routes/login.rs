@@ -1,10 +1,11 @@
 use lambda_http::http::{header, StatusCode};
 use lambda_http::{Context, Request, Response};
-
+use std::env;
 use papo_provider_core::OAuthProvider;
 
 use crate::context::AppContext;
 use crate::Error;
+use crate::REDIRECT_URI;
 
 pub fn login_handler(
     _: Request,

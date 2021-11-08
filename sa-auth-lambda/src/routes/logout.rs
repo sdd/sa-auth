@@ -4,6 +4,7 @@ use lambda_http::{Context, Request, Response};
 
 use crate::context::AppContext;
 use crate::Error;
+use crate::{AUTH_COOKIE_DOMAIN, AUTH_COOKIE_NAME, AUTH_COOKIE_PATH};
 
 pub fn logout_handler(
     _: Request,

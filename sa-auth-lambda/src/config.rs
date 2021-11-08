@@ -32,6 +32,7 @@ impl AppConfig {
         let auth_cookie_domain =
             env::var("AUTH_COOKIE_DOMAIN").expect("Missing AUTH_COOKIE_DOMAIN env var");
 
+
         let google_oauth_config = GoogleOAuthConfig {
             client_id,
             client_secret,
