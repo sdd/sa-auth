@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust:
+        toolchain:
           - nightly
     steps:
       - uses: actions/checkout@v2
@@ -17,21 +17,40 @@ jobs:
         name: Set up toolchain
         with:
           profile: minimal
-          toolchain: ${{ matrix.rust }}
+          toolchain: ${{ matrix.toolchain }}
           override: true
+          components: clippy, rustfmt
       - uses: actions-rs/cargo@v1
         name: cargo check
         with:
           command: check
           args: --all-features
       - uses: actions-rs/cargo@v1
-        name: cargo test
+        name: Build (Debug)
+        with:
+          command: build
+      - uses: actions-rs/cargo@v1
+        name: Rustfmt
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+      - uses: actions-rs/cargo@v1
+        name: Test
         with:
           command: test
           args: --all-features
       - uses: actions-rs/cargo@v1
-        name: cargo build --release
+        name: Build (Release)
         with:
           command: build
           args: --all-features --release
+      - name: Security audit
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
