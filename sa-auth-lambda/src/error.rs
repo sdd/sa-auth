@@ -1,5 +1,5 @@
 use aws_sdk_dynamodb::{Error as DynamoDbError, SdkError};
-use aws_sdk_dynamodb::error::{GetItemError, PutItemError};
+use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
 use reqwest::Error as ReqwestError;
 
 use sa_auth_model::{ModelError, UserParseError};
@@ -18,6 +18,9 @@ pub enum AuthServiceError {
 
     #[error("could not put item into dynamodb")]
     DynamoDbPutItemError(#[from] SdkError<PutItemError>),
+
+    #[error("could not query dynamodb")]
+    DynamoDbQueryError(#[from] SdkError<QueryError>),
 
     #[error("could not create JWT")]
     JWTCreationError,

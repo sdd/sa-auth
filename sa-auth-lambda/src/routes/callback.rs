@@ -7,26 +7,27 @@ use lambda_http::lambda_runtime::Error;
 use unique_id::Generator;
 
 use papo_provider_core::{Identity as GoogleIdentity, OAuthProvider};
+use log::{debug,warn};
 use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User, UserRepository};
 
-use crate::{AUTH_COOKIE_DOMAIN, AUTH_COOKIE_NAME, AUTH_COOKIE_PATH};
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
 
 pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
     if let Some(code) = req.query_string_parameters().get("code") {
         let code = code.to_string();
-
         let provider = &app_ctx.google_oauth_provider();
 
         let token_response = provider.get_token(&code).await?;
-        println!("Token Response: {:?}", &token_response);
+        debug!("Good Token Response (scope {:?})", &token_response.scope);
         let identity = provider.get_identity(&token_response.access_token).await?;
+        debug!("Good Identity Response (email {:?})", identity.email);
 
         let user: User = get_or_create_user(identity, &app_ctx.identity_repository(), &app_ctx.user_repository(), &app_ctx.id_generator).await?;
+        debug!("Good User Response (user_id={:?}", &user.id);
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
-        Ok(create_cookie_response(jwt))
+        Ok(create_cookie_response(jwt, &app_ctx.cfg.auth_cookie_domain, &app_ctx.cfg.auth_cookie_name, &app_ctx.cfg.auth_cookie_path))
     } else {
         Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -35,10 +36,10 @@ pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) ->
     }
 }
 
-pub fn create_cookie_response(jwt: String) -> Response<String> {
-    let cookie = Cookie::build(AUTH_COOKIE_NAME, jwt)
-        .domain(AUTH_COOKIE_DOMAIN)
-        .path(AUTH_COOKIE_PATH)
+pub fn create_cookie_response(jwt: String, auth_cookie_domain: &str, auth_cookie_name: &str, auth_cookie_path: &str) -> Response<String> {
+    let cookie = Cookie::build(auth_cookie_name, jwt)
+        .domain(auth_cookie_domain)
+        .path(auth_cookie_path)
         .http_only(true)
         .finish();
 
@@ -52,28 +53,34 @@ pub fn create_cookie_response(jwt: String) -> Response<String> {
 pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, identity_repo: &I, user_repo: &U, id_generator: &impl Generator<String>) -> Result<User, ModelError> {
     // check to see if there is a corresponding entry in the identities table
     if let Some(matching_identity) = identity_repo.get_by_id(&identity.id, "GOOG").await? {
+        debug!("Successfully retrieved identity with foreign id {:?}", &identity.id);
 
         // if there is, retrieve the matching user from the users table.
         if let Some(user) = user_repo.get_by_id(&matching_identity.user_id).await? {
             Ok(user)
         } else {
+            warn!("User not found for Identity with id {:?}", &matching_identity.id);
             Err(ModelError::IdentityUserNotFound)
         }
     } else {
-        // If not, need to insert a new identity.
+        // If not, need to insert a new identity
+        debug!("no matching Identity, inserting one");
 
         // Check for a user with a matching email
         let user = user_repo.get_by_email(&identity.email).await?;
 
         if let Some(user) = user {
+            debug!("existing User found with same email ({:?})", &identity.email);
             // if there is one, insert a new identity for this user
             let new_identity: Identity = Identity {
                 id: identity.id.clone(),
                 user_id: user.id.clone()
             };
             identity_repo.insert(&new_identity, &user, "GOOG").await?;
+            debug!("Identity successfully inserted");
             Ok(user)
         } else {
+            debug!("No matching User, inserting a new one");
             // if there isn't, create a new user entry.
             let user = User {
                 id: id_generator.next_id(),
@@ -83,11 +90,13 @@ pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identi
             };
 
             user_repo.insert(&user).await?;
+            debug!("User inserted sucessfully");
             let new_identity: Identity = Identity {
                 id: identity.id.clone(),
                 user_id: user.id.clone()
             };
             identity_repo.insert(&new_identity, &user, "GOOG").await?;
+            debug!("Identity inserted successfully");
             Ok(user)
         }
     }
@@ -385,7 +394,7 @@ mod tests {
     #[test]
     fn create_cookie_response_gives_a_well_formed_cookie() {
         let jwt = "A_JWT".to_string();
-        let result = create_cookie_response(jwt).into_parts();
+        let result = create_cookie_response(jwt, "solvastro.com", "sa-auth", "/").into_parts();
 
         assert_eq!(result.0.status, 200);
         assert_eq!(result.0.headers.get("set-cookie").unwrap(), "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");

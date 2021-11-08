@@ -4,7 +4,7 @@ use lambda_http::http::{StatusCode, header};
 use serde_json;
 
 use crate::context::AppContext;
-use crate::{Error, AUTH_COOKIE_NAME};
+use crate::Error;
 use cookie::Cookie;
 use sa_auth_model::Claims;
 
@@ -13,7 +13,7 @@ pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Resp
 
     for cookie in cookies {
         if let Ok(cookie) = Cookie::parse(cookie.to_str().unwrap()) {
-            if cookie.name() == AUTH_COOKIE_NAME {
+            if cookie.name() == &app_ctx.cfg.auth_cookie_name {
                 if let Ok(token_data) = decode::<Claims>(
                     cookie.value(),
                     &DecodingKey::from_secret(app_ctx.cfg.jwt_secret.as_ref()),
@@ -65,6 +65,10 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
+        env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
+        env::set_var("AUTH_COOKIE_NAME", "auth");
+        env::set_var("AUTH_COOKIE_PATH", "/");
+        
         let cfg = AppConfig::new();
         let app_ctx = AppContext::new(cfg).await;
 
@@ -73,7 +77,7 @@ mod tests {
         let jwt_secret =  b"TEST_JWT_SECRET";
         let jwt = create_jwt(uid, &role, jwt_secret.as_ref()).unwrap();
 
-        let cookie = Cookie::build(AUTH_COOKIE_NAME, jwt)
+        let cookie = Cookie::build("auth", jwt)
             .domain("test.local")
             .path("/")
             .http_only(true)

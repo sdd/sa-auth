@@ -4,7 +4,7 @@ use std::convert::{TryFrom, TryInto};
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
-use aws_sdk_dynamodb::error::{GetItemError, PutItemError};
+use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
 use aws_sdk_dynamodb::model::AttributeValue;
 use aws_sdk_dynamodb::output::PutItemOutput;
 use serde::{Deserialize,Serialize};
@@ -145,6 +145,10 @@ pub enum ModelError {
 
     #[error("could not parse user from db")]
     DbUserParseError(#[from] UserParseError),
+
+    #[error("could not query dynamodb")]
+    DynamoDbQueryError(#[from] SdkError<QueryError>),
+
 }
 
 #[async_trait]
@@ -221,8 +225,20 @@ impl UserRepository for DynamoDbUserRepository<'_> {
     }
 
     async fn get_by_email(&self, email: &str) -> Result<Option<User>, ModelError> {
-        if let Some(user) = dynamodb_get_by_key(&self.client, &self.table_name, "email", &email).await? {
-            Ok(Some(user.try_into()?))
+
+        let result = self.client.query()
+            .table_name(&self.table_name)
+            .index_name("email")
+            .key_condition_expression("email = :email")
+            .expression_attribute_values(":email", AttributeValue::S(String::from(email)))
+            .send().await?;
+        
+        if let Some(items) = result.items {
+            if !items.is_empty() {
+                Ok(Some(items[0].clone().try_into()?))
+            } else {
+                Ok(None)
+            }
         } else {
             Ok(None)
         }
@@ -234,6 +250,7 @@ impl UserRepository for DynamoDbUserRepository<'_> {
             .item("id", AttributeValue::S(String::from(&user.id)))
             .item("name", AttributeValue::S(String::from(&user.name)))
             .item("email", AttributeValue::S(String::from(&user.email)))
+            .item("role", AttributeValue::S(format!("{:?}", &user.role)))
             .send().await
     }
 }
