@@ -1,19 +1,23 @@
 use chrono::Utc;
 use cookie::Cookie;
 use jsonwebtoken::{encode, EncodingKey, Header};
-use lambda_http::{Context, Request, RequestExt, Response};
 use lambda_http::http::StatusCode;
 use lambda_http::lambda_runtime::Error;
+use lambda_http::{Context, Request, RequestExt, Response};
 use unique_id::Generator;
 
+use log::{debug, warn};
 use papo_provider_core::{Identity as GoogleIdentity, OAuthProvider};
-use log::{debug,warn};
 use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User, UserRepository};
 
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
 
-pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+pub async fn callback_handler(
+    req: Request,
+    _: Context,
+    app_ctx: &AppContext,
+) -> Result<Response<String>, Error> {
     if let Some(code) = req.query_string_parameters().get("code") {
         let code = code.to_string();
         let provider = &app_ctx.google_oauth_provider();
@@ -23,11 +27,22 @@ pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) ->
         let identity = provider.get_identity(&token_response.access_token).await?;
         debug!("Good Identity Response (email {:?})", identity.email);
 
-        let user: User = get_or_create_user(identity, &app_ctx.identity_repository(), &app_ctx.user_repository(), &app_ctx.id_generator).await?;
+        let user: User = get_or_create_user(
+            identity,
+            &app_ctx.identity_repository(),
+            &app_ctx.user_repository(),
+            &app_ctx.id_generator,
+        )
+        .await?;
         debug!("Good User Response (user_id={:?}", &user.id);
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
-        Ok(create_cookie_response(jwt, &app_ctx.cfg.auth_cookie_domain, &app_ctx.cfg.auth_cookie_name, &app_ctx.cfg.auth_cookie_path))
+        Ok(create_cookie_response(
+            jwt,
+            &app_ctx.cfg.auth_cookie_domain,
+            &app_ctx.cfg.auth_cookie_name,
+            &app_ctx.cfg.auth_cookie_path,
+        ))
     } else {
         Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -36,7 +51,12 @@ pub async fn callback_handler(req: Request, _: Context, app_ctx: &AppContext) ->
     }
 }
 
-pub fn create_cookie_response(jwt: String, auth_cookie_domain: &str, auth_cookie_name: &str, auth_cookie_path: &str) -> Response<String> {
+pub fn create_cookie_response(
+    jwt: String,
+    auth_cookie_domain: &str,
+    auth_cookie_name: &str,
+    auth_cookie_path: &str,
+) -> Response<String> {
     let cookie = Cookie::build(auth_cookie_name, jwt)
         .domain(auth_cookie_domain)
         .path(auth_cookie_path)
@@ -50,16 +70,27 @@ pub fn create_cookie_response(jwt: String, auth_cookie_domain: &str, auth_cookie
         .unwrap()
 }
 
-pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identity: GoogleIdentity, identity_repo: &I, user_repo: &U, id_generator: &impl Generator<String>) -> Result<User, ModelError> {
+pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(
+    identity: GoogleIdentity,
+    identity_repo: &I,
+    user_repo: &U,
+    id_generator: &impl Generator<String>,
+) -> Result<User, ModelError> {
     // check to see if there is a corresponding entry in the identities table
     if let Some(matching_identity) = identity_repo.get_by_id(&identity.id, "GOOG").await? {
-        debug!("Successfully retrieved identity with foreign id {:?}", &identity.id);
+        debug!(
+            "Successfully retrieved identity with foreign id {:?}",
+            &identity.id
+        );
 
         // if there is, retrieve the matching user from the users table.
         if let Some(user) = user_repo.get_by_id(&matching_identity.user_id).await? {
             Ok(user)
         } else {
-            warn!("User not found for Identity with id {:?}", &matching_identity.id);
+            warn!(
+                "User not found for Identity with id {:?}",
+                &matching_identity.id
+            );
             Err(ModelError::IdentityUserNotFound)
         }
     } else {
@@ -70,11 +101,14 @@ pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identi
         let user = user_repo.get_by_email(&identity.email).await?;
 
         if let Some(user) = user {
-            debug!("existing User found with same email ({:?})", &identity.email);
+            debug!(
+                "existing User found with same email ({:?})",
+                &identity.email
+            );
             // if there is one, insert a new identity for this user
             let new_identity: Identity = Identity {
                 id: identity.id.clone(),
-                user_id: user.id.clone()
+                user_id: user.id.clone(),
             };
             identity_repo.insert(&new_identity, &user, "GOOG").await?;
             debug!("Identity successfully inserted");
@@ -86,14 +120,14 @@ pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(identi
                 id: id_generator.next_id(),
                 name: identity.name.clone(),
                 email: identity.email.clone(),
-                role: Role::User
+                role: Role::User,
             };
 
             user_repo.insert(&user).await?;
             debug!("User inserted sucessfully");
             let new_identity: Identity = Identity {
                 id: identity.id.clone(),
-                user_id: user.id.clone()
+                user_id: user.id.clone(),
             };
             identity_repo.insert(&new_identity, &user, "GOOG").await?;
             debug!("Identity inserted successfully");
@@ -126,11 +160,11 @@ mod tests {
     use aws_sdk_dynamodb::error::PutItemError;
     use aws_sdk_dynamodb::output::PutItemOutput;
     use aws_sdk_dynamodb::SdkError;
-    use unique_id::string::StringGenerator;
     use sa_auth_model::ModelError;
+    use unique_id::string::StringGenerator;
 
-    use crate::routes::callback::{create_cookie_response, create_jwt, get_or_create_user};
     use super::*;
+    use crate::routes::callback::{create_cookie_response, create_jwt, get_or_create_user};
 
     #[tokio::test]
     async fn get_or_create_user_returns_matching_user_if_present() {
@@ -140,11 +174,16 @@ mod tests {
             async fn get_by_id(&self, _: &str, _: &str) -> Result<Option<Identity>, ModelError> {
                 Ok(Some(Identity {
                     id: "GOOG:ID_001".to_string(),
-                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string()
+                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string(),
                 }))
             }
 
-            async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
+            async fn insert(
+                &self,
+                _: &Identity,
+                _: &User,
+                _: &str,
+            ) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
         }
@@ -159,7 +198,7 @@ mod tests {
                         id: "MCBOB_BUTTERSCHNITZ_ID".to_string(),
                         name: "MCBOB BUTTERSCHNITZ".to_string(),
                         email: "mcbob@butterschnitz.com".to_string(),
-                        role: Role::User
+                        role: Role::User,
                     })
                 } else {
                     None
@@ -181,17 +220,14 @@ mod tests {
             picture: ":-)".to_string(),
             email: "mcbob@butterschnitz.com".to_string(),
             id: "GOOG:ID_001".to_string(),
-            verified_email: false
+            verified_email: false,
         };
 
         let id_generator = StringGenerator::default();
 
-        let result = get_or_create_user(
-            identity,
-            &identity_repo,
-            &user_repo,
-            &id_generator
-        ).await.unwrap();
+        let result = get_or_create_user(identity, &identity_repo, &user_repo, &id_generator)
+            .await
+            .unwrap();
 
         assert_eq!(result.id, "MCBOB_BUTTERSCHNITZ_ID");
         assert_eq!(result.email, "mcbob@butterschnitz.com");
@@ -205,11 +241,16 @@ mod tests {
             async fn get_by_id(&self, _: &str, _: &str) -> Result<Option<Identity>, ModelError> {
                 Ok(Some(Identity {
                     id: "GOOG:ID_001".to_string(),
-                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string()
+                    user_id: "MCBOB_BUTTERSCHNITZ_ID".to_string(),
                 }))
             }
 
-            async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
+            async fn insert(
+                &self,
+                _: &Identity,
+                _: &User,
+                _: &str,
+            ) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 unimplemented!()
             }
         }
@@ -237,26 +278,23 @@ mod tests {
             picture: ":-)".to_string(),
             email: "mcbob@butterschnitz.com".to_string(),
             id: "GOOG:ID_001".to_string(),
-            verified_email: false
+            verified_email: false,
         };
 
         let id_generator = StringGenerator::default();
 
-        let result = get_or_create_user(
-            identity,
-            &identity_repo,
-            &user_repo,
-            &id_generator
-        ).await.err();
+        let result = get_or_create_user(identity, &identity_repo, &user_repo, &id_generator)
+            .await
+            .err();
 
         // TODO: explicitly check for AuthServiceError::IdentityUserNotFound
         assert!(result.is_some());
     }
 
     #[tokio::test]
-    async fn get_or_create_user_returns_user_and_inserts_identity_if_no_identity_but_user_with_same_email() {
-        struct FakeIdentityRepository {
-        }
+    async fn get_or_create_user_returns_user_and_inserts_identity_if_no_identity_but_user_with_same_email(
+    ) {
+        struct FakeIdentityRepository {}
 
         #[async_trait]
         impl IdentityRepository for FakeIdentityRepository {
@@ -264,7 +302,12 @@ mod tests {
                 Ok(None)
             }
 
-            async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
+            async fn insert(
+                &self,
+                _: &Identity,
+                _: &User,
+                _: &str,
+            ) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 Ok(PutItemOutput::builder().build())
             }
         }
@@ -282,7 +325,7 @@ mod tests {
                     id: "ID_NORMAN".to_string(),
                     name: "Norman McDingleton".to_string(),
                     email: "norman@gmail.com".to_string(),
-                    role: Role::User
+                    role: Role::User,
                 }))
             }
 
@@ -297,17 +340,14 @@ mod tests {
             email: "norman@gmail.com".to_string(),
             picture: ":-)".to_string(),
             id: "GOOG:ID_002".to_string(),
-            verified_email: true
+            verified_email: true,
         };
 
         let id_generator = StringGenerator::default();
 
-        let result = get_or_create_user(
-            identity,
-            &identity_repo,
-            &user_repo,
-            &id_generator
-        ).await.unwrap();
+        let result = get_or_create_user(identity, &identity_repo, &user_repo, &id_generator)
+            .await
+            .unwrap();
 
         assert_eq!(result.id, "ID_NORMAN");
         // TODO: test identity actually inserted
@@ -316,8 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_or_create_user_inserts_user_and_identity_if_no_identity_or_user_found() {
-        struct FakeIdentityRepository {
-        }
+        struct FakeIdentityRepository {}
 
         #[async_trait]
         impl IdentityRepository for FakeIdentityRepository {
@@ -325,7 +364,12 @@ mod tests {
                 Ok(None)
             }
 
-            async fn insert(&self, _: &Identity, _: &User, _: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
+            async fn insert(
+                &self,
+                _: &Identity,
+                _: &User,
+                _: &str,
+            ) -> Result<PutItemOutput, SdkError<PutItemError>> {
                 Ok(PutItemOutput::builder().build())
             }
         }
@@ -353,7 +397,7 @@ mod tests {
             email: "norman@gmail.com".to_string(),
             picture: ":-)".to_string(),
             id: "GOOG:ID_002".to_string(),
-            verified_email: true
+            verified_email: true,
         };
 
         #[derive(Default)]
@@ -364,14 +408,11 @@ mod tests {
             }
         }
 
-        let id_generator = FakeIdGenerator{};
+        let id_generator = FakeIdGenerator {};
 
-        let result = get_or_create_user(
-            identity,
-            &identity_repo,
-            &user_repo,
-            &id_generator
-        ).await.unwrap();
+        let result = get_or_create_user(identity, &identity_repo, &user_repo, &id_generator)
+            .await
+            .unwrap();
 
         assert_eq!(result.id, "ID_999");
         // TODO: test identity and user actually inserted
@@ -383,7 +424,7 @@ mod tests {
         let uid = "userid-001";
         let role: Role = Role::Admin;
 
-        let jwt_secret =  b"secret";
+        let jwt_secret = b"secret";
 
         let jwt = create_jwt(uid, &role, jwt_secret).unwrap();
 
@@ -397,7 +438,10 @@ mod tests {
         let result = create_cookie_response(jwt, "solvastro.com", "sa-auth", "/").into_parts();
 
         assert_eq!(result.0.status, 200);
-        assert_eq!(result.0.headers.get("set-cookie").unwrap(), "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com");
+        assert_eq!(
+            result.0.headers.get("set-cookie").unwrap(),
+            "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com"
+        );
         assert_eq!(result.1, "");
     }
 }

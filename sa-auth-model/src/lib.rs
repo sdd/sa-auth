@@ -1,13 +1,13 @@
-use std::fmt;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 
 use async_trait::async_trait;
-use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
 use aws_sdk_dynamodb::model::AttributeValue;
 use aws_sdk_dynamodb::output::PutItemOutput;
-use serde::{Deserialize,Serialize};
+use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
+use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
 const DYNAMODB_TABLE_IDENTITIES: &'static str = "solvastro-identities";
@@ -148,13 +148,21 @@ pub enum ModelError {
 
     #[error("could not query dynamodb")]
     DynamoDbQueryError(#[from] SdkError<QueryError>),
-
 }
 
 #[async_trait]
 pub trait IdentityRepository {
-    async fn get_by_id(&self, id: &str, identity_prefix: &str) -> Result<Option<Identity>, ModelError>;
-    async fn insert(&self, identity: &Identity, user: &User, identity_prefix: &str) -> Result<PutItemOutput, SdkError<PutItemError>>;
+    async fn get_by_id(
+        &self,
+        id: &str,
+        identity_prefix: &str,
+    ) -> Result<Option<Identity>, ModelError>;
+    async fn insert(
+        &self,
+        identity: &Identity,
+        user: &User,
+        identity_prefix: &str,
+    ) -> Result<PutItemOutput, SdkError<PutItemError>>;
 }
 
 #[async_trait]
@@ -169,18 +177,22 @@ pub struct DynamoDbIdentityRepository<'a> {
     table_name: String,
 }
 
-impl <'a> DynamoDbIdentityRepository<'a> {
+impl<'a> DynamoDbIdentityRepository<'a> {
     pub fn new(client: &DynamodbClient) -> DynamoDbIdentityRepository {
         DynamoDbIdentityRepository {
             client,
-            table_name: DYNAMODB_TABLE_IDENTITIES.into()
+            table_name: DYNAMODB_TABLE_IDENTITIES.into(),
         }
     }
 }
 
 #[async_trait]
 impl IdentityRepository for DynamoDbIdentityRepository<'_> {
-    async fn get_by_id(&self, id: &str, identity_prefix: &str) -> Result<Option<Identity>, ModelError> {
+    async fn get_by_id(
+        &self,
+        id: &str,
+        identity_prefix: &str,
+    ) -> Result<Option<Identity>, ModelError> {
         let id = format!("{}:{}", identity_prefix, id);
         if let Some(identity) = dynamodb_get_by_id(&self.client, &self.table_name, &id).await? {
             Ok(Some(Identity {
@@ -191,12 +203,22 @@ impl IdentityRepository for DynamoDbIdentityRepository<'_> {
             Ok(None)
         }
     }
-    async fn insert(&self, identity: &Identity, user: &User, identity_prefix: &str) -> Result<PutItemOutput, SdkError<PutItemError>> {
-        self.client.put_item()
+    async fn insert(
+        &self,
+        identity: &Identity,
+        user: &User,
+        identity_prefix: &str,
+    ) -> Result<PutItemOutput, SdkError<PutItemError>> {
+        self.client
+            .put_item()
             .table_name(&self.table_name)
-            .item("id", AttributeValue::S(format!("{}:{}", identity_prefix, identity.id)))
+            .item(
+                "id",
+                AttributeValue::S(format!("{}:{}", identity_prefix, identity.id)),
+            )
             .item("user_id", AttributeValue::S(String::from(&user.id)))
-            .send().await
+            .send()
+            .await
     }
 }
 
@@ -205,11 +227,11 @@ pub struct DynamoDbUserRepository<'a> {
     table_name: String,
 }
 
-impl <'a> DynamoDbUserRepository<'a> {
+impl<'a> DynamoDbUserRepository<'a> {
     pub fn new(client: &DynamodbClient) -> DynamoDbUserRepository {
         DynamoDbUserRepository {
             client,
-            table_name: DYNAMODB_TABLE_USERS.into()
+            table_name: DYNAMODB_TABLE_USERS.into(),
         }
     }
 }
@@ -225,14 +247,16 @@ impl UserRepository for DynamoDbUserRepository<'_> {
     }
 
     async fn get_by_email(&self, email: &str) -> Result<Option<User>, ModelError> {
-
-        let result = self.client.query()
+        let result = self
+            .client
+            .query()
             .table_name(&self.table_name)
             .index_name("email")
             .key_condition_expression("email = :email")
             .expression_attribute_values(":email", AttributeValue::S(String::from(email)))
-            .send().await?;
-        
+            .send()
+            .await?;
+
         if let Some(items) = result.items {
             if !items.is_empty() {
                 Ok(Some(items[0].clone().try_into()?))
@@ -245,28 +269,42 @@ impl UserRepository for DynamoDbUserRepository<'_> {
     }
 
     async fn insert(&self, user: &User) -> Result<PutItemOutput, SdkError<PutItemError>> {
-        self.client.put_item()
+        self.client
+            .put_item()
             .table_name(&self.table_name)
             .item("id", AttributeValue::S(String::from(&user.id)))
             .item("name", AttributeValue::S(String::from(&user.name)))
             .item("email", AttributeValue::S(String::from(&user.email)))
             .item("role", AttributeValue::S(format!("{:?}", &user.role)))
-            .send().await
+            .send()
+            .await
     }
 }
 
-async fn dynamodb_get_by_key(dynamodb_client: &DynamodbClient, table_name: &str, key: &str, val: &str) -> Result<Option<HashMap<String, AttributeValue>>, ModelError> {
-    if let Some(item) = dynamodb_client.get_item()
+async fn dynamodb_get_by_key(
+    dynamodb_client: &DynamodbClient,
+    table_name: &str,
+    key: &str,
+    val: &str,
+) -> Result<Option<HashMap<String, AttributeValue>>, ModelError> {
+    if let Some(item) = dynamodb_client
+        .get_item()
         .table_name(table_name)
         .key(key, AttributeValue::S(val.to_string()))
         .send()
-        .await?.item {
+        .await?
+        .item
+    {
         Ok(Some(item))
     } else {
         Ok(None)
     }
 }
 
-async fn dynamodb_get_by_id(dynamodb_client: &DynamodbClient, table_name: &str, id: &str) -> Result<Option<HashMap<String, AttributeValue>>, ModelError> {
-    dynamodb_get_by_key(dynamodb_client, table_name,  "id", id).await
+async fn dynamodb_get_by_id(
+    dynamodb_client: &DynamodbClient,
+    table_name: &str,
+    id: &str,
+) -> Result<Option<HashMap<String, AttributeValue>>, ModelError> {
+    dynamodb_get_by_key(dynamodb_client, table_name, "id", id).await
 }

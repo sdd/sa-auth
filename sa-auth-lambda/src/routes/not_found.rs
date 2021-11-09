@@ -1,10 +1,14 @@
+use lambda_http::http::StatusCode;
 use lambda_http::{Context, Request, Response};
-use lambda_http::http::{StatusCode};
 
 use crate::context::AppContext;
 use crate::Error;
 
-pub fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Response<String>, Error> {
+pub fn not_found_handler(
+    _: Request,
+    _: Context,
+    _: &AppContext,
+) -> Result<Response<String>, Error> {
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
         .body("404 Not Found".to_string())
@@ -13,9 +17,9 @@ pub fn not_found_handler(_: Request, _: Context, _: &AppContext) -> Result<Respo
 
 #[cfg(test)]
 mod tests {
+    use lambda_http::http::Uri;
     use std::env;
     use std::str::FromStr;
-    use lambda_http::http::Uri;
 
     use crate::config::AppConfig;
     use crate::context::AppContext;

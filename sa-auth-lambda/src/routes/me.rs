@@ -1,6 +1,6 @@
-use jsonwebtoken::{decode, Validation, DecodingKey};
+use jsonwebtoken::{decode, DecodingKey, Validation};
+use lambda_http::http::{header, StatusCode};
 use lambda_http::{Context, Request, Response};
-use lambda_http::http::{StatusCode, header};
 use serde_json;
 
 use crate::context::AppContext;
@@ -8,7 +8,11 @@ use crate::Error;
 use cookie::Cookie;
 use sa_auth_model::Claims;
 
-pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+pub fn me_handler(
+    req: Request,
+    _: Context,
+    app_ctx: &AppContext,
+) -> Result<Response<String>, Error> {
     let cookies = req.headers().get_all(header::COOKIE);
 
     for cookie in cookies {
@@ -17,7 +21,7 @@ pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Resp
                 if let Ok(token_data) = decode::<Claims>(
                     cookie.value(),
                     &DecodingKey::from_secret(app_ctx.cfg.jwt_secret.as_ref()),
-                    &Validation::default()
+                    &Validation::default(),
                 ) {
                     let claims: Claims = token_data.claims;
                     let body = serde_json::to_string(&claims)?;
@@ -25,18 +29,18 @@ pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Resp
                     return Ok(Response::builder()
                         .status(StatusCode::OK)
                         .body(body)
-                        .unwrap())
-                // } else {
-                //     // Bad JWT for the cookie
-                //     println!("BAD JWT: {}", cookie.value());
+                        .unwrap());
+                    // } else {
+                    //     // Bad JWT for the cookie
+                    //     println!("BAD JWT: {}", cookie.value());
                 }
-            // } else {
-            //     // this cookie has the wrong name
-            //     println!("Different cookie name: {}", cookie.name());
+                // } else {
+                //     // this cookie has the wrong name
+                //     println!("Different cookie name: {}", cookie.name());
             }
-        // } else {
-        //     // this cookie header doesn't parse properly
-        //     println!("Malformed cookie header");
+            // } else {
+            //     // this cookie header doesn't parse properly
+            //     println!("Malformed cookie header");
         }
     }
 
@@ -48,17 +52,17 @@ pub fn me_handler(req: Request, _: Context, app_ctx: &AppContext) -> Result<Resp
 
 #[cfg(test)]
 mod tests {
+    use lambda_http::http::Uri;
     use std::env;
     use std::str::FromStr;
-    use lambda_http::http::{Uri};
 
     use crate::config::AppConfig;
     use crate::context::AppContext;
 
     use super::*;
-    use cookie::Cookie;
     use crate::routes::callback::create_jwt;
-    use sa_auth_model::{Role, Claims};
+    use cookie::Cookie;
+    use sa_auth_model::{Claims, Role};
 
     #[tokio::test]
     async fn me_handler_gives_json_of_jwt() {
@@ -68,13 +72,13 @@ mod tests {
         env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
         env::set_var("AUTH_COOKIE_NAME", "auth");
         env::set_var("AUTH_COOKIE_PATH", "/");
-        
+
         let cfg = AppConfig::new();
         let app_ctx = AppContext::new(cfg).await;
 
         let uid = "userid-001";
         let role = Role::Admin;
-        let jwt_secret =  b"TEST_JWT_SECRET";
+        let jwt_secret = b"TEST_JWT_SECRET";
         let jwt = create_jwt(uid, &role, jwt_secret.as_ref()).unwrap();
 
         let cookie = Cookie::build("auth", jwt)
@@ -85,7 +89,8 @@ mod tests {
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/some-weird-path").unwrap();
-        req.headers_mut().insert("Cookie", cookie.to_string().parse().unwrap());
+        req.headers_mut()
+            .insert("Cookie", cookie.to_string().parse().unwrap());
         let ctx = Context::default();
 
         let result = me_handler(req, ctx, &app_ctx);

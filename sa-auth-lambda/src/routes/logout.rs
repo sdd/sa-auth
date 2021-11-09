@@ -1,11 +1,15 @@
 use cookie::Cookie;
-use lambda_http::{Context, Request, Response};
 use lambda_http::http::{header, StatusCode};
+use lambda_http::{Context, Request, Response};
 
 use crate::context::AppContext;
 use crate::Error;
 
-pub fn logout_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+pub fn logout_handler(
+    _: Request,
+    _: Context,
+    app_ctx: &AppContext,
+) -> Result<Response<String>, Error> {
     let cookie = Cookie::build(&app_ctx.cfg.auth_cookie_name, "")
         .domain(&app_ctx.cfg.auth_cookie_domain)
         .path(&app_ctx.cfg.auth_cookie_path)
@@ -21,13 +25,13 @@ pub fn logout_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Re
 
 #[cfg(test)]
 mod tests {
+    use lambda_http::http::Uri;
     use std::env;
     use std::str::FromStr;
-    use lambda_http::http::Uri;
 
+    use super::*;
     use crate::config::AppConfig;
     use crate::context::AppContext;
-    use super::*;
 
     #[tokio::test]
     async fn logout_handler_returns_response_that_clears_auth_cookie() {
@@ -48,7 +52,12 @@ mod tests {
         println!("result: {:?}", &result);
         assert_eq!(result.status(), StatusCode::OK);
 
-        let expected = format!("{}=; HttpOnly; Path={}; Domain={}", &app_ctx.cfg.auth_cookie_name, &app_ctx.cfg.auth_cookie_path, &app_ctx.cfg.auth_cookie_domain);
+        let expected = format!(
+            "{}=; HttpOnly; Path={}; Domain={}",
+            &app_ctx.cfg.auth_cookie_name,
+            &app_ctx.cfg.auth_cookie_path,
+            &app_ctx.cfg.auth_cookie_domain
+        );
         assert_eq!(result.headers().get(header::SET_COOKIE).unwrap(), &expected);
     }
 }

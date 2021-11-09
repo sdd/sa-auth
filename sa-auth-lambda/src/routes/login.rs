@@ -1,28 +1,37 @@
-use lambda_http::{Context, Request, Response};
 use lambda_http::http::{header, StatusCode};
+use lambda_http::{Context, Request, Response};
 
 use papo_provider_core::OAuthProvider;
 
 use crate::context::AppContext;
 use crate::Error;
 
-pub fn login_handler(_: Request, _: Context, app_ctx: &AppContext) -> Result<Response<String>, Error> {
+pub fn login_handler(
+    _: Request,
+    _: Context,
+    app_ctx: &AppContext,
+) -> Result<Response<String>, Error> {
     Ok(Response::builder()
         .status(StatusCode::FOUND)
-        .header(header::LOCATION, app_ctx.google_oauth_provider().get_login_url(&app_ctx.cfg.google_oauth_config.redirect_url))
+        .header(
+            header::LOCATION,
+            app_ctx
+                .google_oauth_provider()
+                .get_login_url(&app_ctx.cfg.google_oauth_config.redirect_url),
+        )
         .body("".to_string())
         .unwrap())
 }
 
 #[cfg(test)]
 mod tests {
+    use lambda_http::http::Uri;
     use std::env;
     use std::str::FromStr;
-    use lambda_http::http::Uri;
 
+    use super::*;
     use crate::config::AppConfig;
     use crate::context::AppContext;
-    use super::*;
 
     #[tokio::test]
     async fn login_handler_returns_well_formed_301() {

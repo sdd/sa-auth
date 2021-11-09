@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Error as ReqwestError;
-use serde::{Deserialize,Serialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
 #[derive(Serialize, Debug)]
@@ -27,7 +27,7 @@ pub struct Identity {
     pub picture: String,
     pub email: String,
     pub id: String,
-    pub verified_email: bool
+    pub verified_email: bool,
 }
 
 #[derive(ThisError, Debug)]

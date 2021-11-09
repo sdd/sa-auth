@@ -3,9 +3,13 @@ mod context;
 mod error;
 mod routes;
 
-use log::{debug};
-use lambda_http::{Context, handler, lambda_runtime::{self, Error as LambdaError}, Request, Response};
 use lambda_http::lambda_runtime::Error;
+use lambda_http::{
+    handler,
+    lambda_runtime::{self, Error as LambdaError},
+    Context, Request, Response,
+};
+use log::debug;
 
 use crate::config::AppConfig;
 use crate::context::AppContext;
@@ -14,7 +18,7 @@ use crate::routes::{callback, login, logout, me, not_found};
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
     simple_logger::init_with_env().unwrap();
-    
+
     let cfg = AppConfig::new();
     debug!("cfg: {:?}", &cfg);
     let app_ctx = AppContext::new(cfg).await;

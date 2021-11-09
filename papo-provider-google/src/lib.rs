@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client as ReqwestClient;
 
-use papo_provider_core::{Identity,OAuthProvider,TokenRequest,TokenResponse,PapoProviderError};
+use papo_provider_core::{Identity, OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
 
 pub const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
@@ -17,7 +17,12 @@ pub struct GoogleOAuthProvider<'a> {
 }
 
 impl<'a> GoogleOAuthProvider<'a> {
-    pub fn new(reqwest_client: &'a ReqwestClient, client_id: &'a str, client_secret: &'a str, redirect_url: &'a str) -> GoogleOAuthProvider<'a> {
+    pub fn new(
+        reqwest_client: &'a ReqwestClient,
+        client_id: &'a str,
+        client_secret: &'a str,
+        redirect_url: &'a str,
+    ) -> GoogleOAuthProvider<'a> {
         GoogleOAuthProvider {
             reqwest_client,
             client_id,
@@ -29,10 +34,7 @@ impl<'a> GoogleOAuthProvider<'a> {
     }
 
     pub fn with_token_url(self, token_url: &'a str) -> Self {
-        GoogleOAuthProvider {
-            token_url,
-            ..self
-        }
+        GoogleOAuthProvider { token_url, ..self }
     }
 
     pub fn with_identity_url(self, identity_url: &'a str) -> Self {
@@ -59,10 +61,11 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
             client_id: &self.client_id,
             client_secret: &self.client_secret,
             redirect_uri: &self.redirect_url,
-            grant_type: "authorization_code"
+            grant_type: "authorization_code",
         };
 
-        Ok(self.reqwest_client
+        Ok(self
+            .reqwest_client
             .post(self.token_url)
             .form(&token_request)
             .send()
@@ -72,7 +75,8 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
     }
 
     async fn get_identity(&self, token: &str) -> Result<Identity, PapoProviderError> {
-        Ok(self.reqwest_client
+        Ok(self
+            .reqwest_client
             .get(self.identity_url)
             .bearer_auth(token)
             .send()
@@ -88,8 +92,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_oauth_provider_get_identity_works() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
-        use wiremock::matchers::{method, header, path};
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock_server = MockServer::start().await;
 
         let mock_identity = Identity {
@@ -97,7 +101,7 @@ mod tests {
             picture: ":-)".to_string(),
             email: "TEST_GOOG_EMAIL".to_string(),
             id: "TEST_GOOG_ID".to_string(),
-            verified_email: false
+            verified_email: false,
         };
 
         Mock::given(method("GET"))
@@ -117,7 +121,8 @@ mod tests {
             client_id.into(),
             client_secret.into(),
             "REDIR_URL".into(),
-        ).with_identity_url(&identity_url);
+        )
+        .with_identity_url(&identity_url);
 
         let token = "TEST_TOKEN";
         let result = provider.get_identity(token).await.unwrap();
@@ -127,24 +132,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_oauth_provider_get_oauth_token_works() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock_server = MockServer::start().await;
 
-        let _expected_body = TokenRequest{
+        let _expected_body = TokenRequest {
             code: "TEST_CODE",
             client_id: "FAKE_ID",
             client_secret: "FAKE_SECRET",
             redirect_uri: "REDIR_URL",
-            grant_type: "authorization_code"
+            grant_type: "authorization_code",
         };
 
-        let mock_token_response = TokenResponse{
+        let mock_token_response = TokenResponse {
             access_token: "A_TOKEN".to_string(),
             expires_in: 1000,
             token_type: "TEST".to_string(),
             scope: "TEST_SCOPE".to_string(),
-            refresh_token: "R_TOKEN".to_string()
+            refresh_token: "R_TOKEN".to_string(),
         };
 
         Mock::given(method("POST"))
@@ -162,7 +167,8 @@ mod tests {
             "FAKE_ID".into(),
             "FAKE_SECRET".into(),
             "REDIR_URL".into(),
-        ).with_token_url(&token_url);
+        )
+        .with_token_url(&token_url);
 
         let code = "TEST_CODE";
         let result = provider.get_token(code).await.unwrap();
