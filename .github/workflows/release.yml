@@ -6,25 +6,41 @@ on:
 
 jobs:
   release:
-    name: Release
+    name: Release (master)
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     steps:
       - name: Checkout
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
+      - uses: actions-rs/toolchain@v1
+        name: Set up Rust toolchain
+        with:
+          profile: minimal
+          toolchain: nightly
+          target: ${{ matrix.target }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        name: Build (Release)
+        with:
+          command: build
+          use-cross: true
+          args: --release --target ${{ matrix.target }}
+      - name: Package artifacts
+        uses: montudor/action-zip@v1
+        with:
+          args: zip -qq lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap && zip -qq lambda-aarch64.zip target/aarch64-unknown-linux-musl/release/bootstrap
       - name: Setup NodeJS
         uses: actions/setup-node@v1
         with:
           node-version: 14
       - name: Install Node deps
         run: npm i -g semantic-release @semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/github @semantic-release/exec @semantic-release/git
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
       - name: Install semantic-release-rust
         uses: actions-rs/cargo@v1
         with:
@@ -35,5 +51,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run:
-          cargo build --release --all-features && semantic-release
-
+          semantic-release

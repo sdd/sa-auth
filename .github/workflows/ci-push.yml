@@ -1,0 +1,52 @@
+on: [push]
+
+name: CI for Push
+
+jobs:
+  check:
+    name: 'Build and Test'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - nightly
+        target:
+          - x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v2
+        name: Check out
+      - uses: actions-rs/toolchain@v1
+        name: Set up toolchain
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          target: ${{ matrix.target }}
+          override: true
+          components: clippy, rustfmt
+      - uses: actions-rs/cargo@v1
+        name: Rustfmt
+        with:
+          command: fmt
+          args: --all -- --check
+      - uses: actions-rs/cargo@v1
+        name: Check
+        with:
+          command: check
+          args: --all-features
+      - uses: actions-rs/cargo@v1
+        name: Build (Debug)
+        with:
+          command: build
+          use-cross: true
+          args: --target ${{ matrix.target }}
+      - name: Clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+      - uses: actions-rs/cargo@v1
+        name: Test
+        with:
+          command: test
+          args: --all-features
+

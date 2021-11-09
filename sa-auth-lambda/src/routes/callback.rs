@@ -35,6 +35,7 @@ pub async fn callback_handler(
         )
         .await?;
         debug!("Good User Response (user_id={:?}", &user.id);
+
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
         Ok(create_cookie_response(
