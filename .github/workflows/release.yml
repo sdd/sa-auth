@@ -35,7 +35,7 @@ jobs:
       - name: Package artifacts
         uses: montudor/action-zip@v1
         with:
-          args: zip -qq lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap && zip -qq lambda-aarch64.zip target/aarch64-unknown-linux-musl/release/bootstrap
+          args: ls -lhaR target && zip -qq target/lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap && zip -qq target/lambda-aarch64.zip target/aarch64-unknown-linux-musl/release/bootstrap && ls -lha ./target/*.zip
       - name: Setup NodeJS
         uses: actions/setup-node@v1
         with:
