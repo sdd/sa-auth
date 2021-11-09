@@ -12,7 +12,6 @@ use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User
 
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
-use crate::{AUTH_COOKIE_DOMAIN, AUTH_COOKIE_NAME, AUTH_COOKIE_PATH};
 
 pub async fn callback_handler(
     req: Request,
