@@ -25,6 +25,7 @@ jobs:
           toolchain: nightly
           target: ${{ matrix.target }}
           override: true
+      - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
         name: Build (Release)
         with:
@@ -34,12 +35,12 @@ jobs:
       - name: Package artifacts
         uses: montudor/action-zip@v1
         with:
-          args: zip -qq lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap && zip -qq lambda-aarch64.zip target/aarch64-unknown-linux-musl/release/bootstrap
+          args: ls -lhaR target && zip -qq target/lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap && zip -qq target/lambda-aarch64.zip target/aarch64-unknown-linux-musl/release/bootstrap && ls -lha ./target/*.zip
       - name: Setup NodeJS
         uses: actions/setup-node@v1
         with:
           node-version: 14
-      - name: Install Node deps
+      - name: Install Semantic Release
         run: npm i -g semantic-release @semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/github @semantic-release/exec @semantic-release/git
       - name: Install semantic-release-rust
         uses: actions-rs/cargo@v1
