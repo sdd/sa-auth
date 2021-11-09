@@ -25,6 +25,7 @@ jobs:
           toolchain: nightly
           target: ${{ matrix.target }}
           override: true
+      - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
         name: Build (Release)
         with:
@@ -39,7 +40,7 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: 14
-      - name: Install Node deps
+      - name: Install Semantic Release
         run: npm i -g semantic-release @semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/github @semantic-release/exec @semantic-release/git
       - name: Install semantic-release-rust
         uses: actions-rs/cargo@v1
