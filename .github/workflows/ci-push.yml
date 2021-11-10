@@ -20,7 +20,7 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
-          target: ${{ matrix.arch }}-unknown-lnux-musl
+          target: ${{ matrix.arch }}-unknown-linux-musl
           override: true
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v1
