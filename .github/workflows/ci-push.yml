@@ -10,8 +10,8 @@ jobs:
       matrix:
         toolchain:
           - nightly
-        target:
-          - x86_64-unknown-linux-musl
+        arch:
+          - x86_64
     steps:
       - uses: actions/checkout@v2
         name: Check out
@@ -20,7 +20,7 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
-          target: ${{ matrix.target }}
+          target: ${{ matrix.arch }}-unknown-lnux-musl
           override: true
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v1
@@ -39,7 +39,7 @@ jobs:
         with:
           command: build
           use-cross: true
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.arch }}-unknown-linux-musl
       - name: Clippy
         uses: actions-rs/clippy-check@v1
         with:
