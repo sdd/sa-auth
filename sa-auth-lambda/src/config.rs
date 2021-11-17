@@ -11,6 +11,7 @@ pub struct GoogleOAuthConfig {
 pub struct AppConfig {
     pub google_oauth_config: GoogleOAuthConfig,
     pub jwt_secret: String,
+    pub success_redirect_url: String,
 
     pub auth_cookie_name: String,
     pub auth_cookie_path: String,
@@ -27,6 +28,8 @@ impl AppConfig {
         let client_secret =
             env::var("GOOGLE_CLIENT_SECRET").expect("Missing GOOGLE_CLIENT_SECRET env var");
         let redirect_url = env::var("REDIRECT_URL").expect("Missing REDIRECT_URL env var");
+        let success_redirect_url =
+            env::var("SUCCESS_REDIRECT_URL").expect("Missing SUCCESS_REDIRECT_URL env var");
 
         let auth_cookie_name =
             env::var("AUTH_COOKIE_NAME").expect("Missing AUTH_COOKIE_NAME env var");
@@ -52,6 +55,7 @@ impl AppConfig {
             auth_cookie_domain,
             auth_cookie_name,
             auth_cookie_path,
+            success_redirect_url,
 
             table_name_identities,
             table_name_users,
@@ -69,6 +73,7 @@ mod tests {
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         env::set_var("REDIRECT_URL", "https://localhost/redir");
+        env::set_var("SUCCESS_REDIRECT_URL", "https://localhost/");
         env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
         env::set_var("AUTH_COOKIE_NAME", "auth");
         env::set_var("AUTH_COOKIE_PATH", "/");

@@ -3,6 +3,7 @@ mod context;
 mod error;
 mod routes;
 
+use lambda_http::http::{header, StatusCode};
 use lambda_http::lambda_runtime::Error;
 use lambda_http::{
     handler,
@@ -34,11 +35,28 @@ async fn auth_handler(
     app_ctx: &AppContext,
 ) -> Result<Response<String>, LambdaError> {
     debug!("req: {:?}", &req);
-    match req.uri().path() {
-        "/auth/login" => login::login_handler(req, ctx, app_ctx),
-        "/auth/logout" => logout::logout_handler(req, ctx, app_ctx),
-        "/auth/callback" => callback::callback_handler(req, ctx, app_ctx).await,
-        "/auth/me" => me::me_handler(req, ctx, app_ctx),
-        _ => not_found::not_found_handler(req, ctx, app_ctx),
+    if req.method() == lambda_http::http::method::Method::OPTIONS {
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Access-Control-Allow-Credentials", "true")
+            .header("Access-Control-Allow-Origin", "https://solvastro.com")
+            .header(
+                "Access-Control-Allow-Headers",
+                "Accept,Authorization,Cookie,Content-Type",
+            )
+            .header(
+                "Access-Control-Allow-Methods",
+                "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT",
+            )
+            .body("".to_string())
+            .unwrap())
+    } else {
+        match req.uri().path() {
+            "/auth/login" => login::login_handler(req, ctx, app_ctx),
+            "/auth/logout" => logout::logout_handler(req, ctx, app_ctx),
+            "/auth/callback" => callback::callback_handler(req, ctx, app_ctx).await,
+            "/auth/me" => me::me_handler(req, ctx, app_ctx),
+            _ => not_found::not_found_handler(req, ctx, app_ctx),
+        }
     }
 }
