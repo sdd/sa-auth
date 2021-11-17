@@ -1,7 +1,7 @@
 use chrono::Utc;
 use cookie::Cookie;
 use jsonwebtoken::{encode, EncodingKey, Header};
-use lambda_http::http::StatusCode;
+use lambda_http::http::{header, StatusCode};
 use lambda_http::lambda_runtime::Error;
 use lambda_http::{Context, Request, RequestExt, Response};
 use unique_id::Generator;
@@ -35,7 +35,6 @@ pub async fn callback_handler(
         )
         .await?;
         debug!("Good User Response (user_id={:?}", &user.id);
-
         let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
 
         Ok(create_cookie_response(
@@ -43,6 +42,7 @@ pub async fn callback_handler(
             &app_ctx.cfg.auth_cookie_domain,
             &app_ctx.cfg.auth_cookie_name,
             &app_ctx.cfg.auth_cookie_path,
+            &app_ctx.cfg.success_redirect_url,
         ))
     } else {
         Ok(Response::builder()
@@ -57,6 +57,7 @@ pub fn create_cookie_response(
     auth_cookie_domain: &str,
     auth_cookie_name: &str,
     auth_cookie_path: &str,
+    redirect_url: &str,
 ) -> Response<String> {
     let cookie = Cookie::build(auth_cookie_name, jwt)
         .domain(auth_cookie_domain)
@@ -65,8 +66,9 @@ pub fn create_cookie_response(
         .finish();
 
     Response::builder()
-        .status(StatusCode::OK)
-        .header("Set-Cookie", cookie.to_string())
+        .status(StatusCode::FOUND)
+        .header(header::SET_COOKIE, cookie.to_string())
+        .header(header::LOCATION, redirect_url.to_string())
         .body("".to_string())
         .unwrap()
 }
@@ -436,9 +438,10 @@ mod tests {
     #[test]
     fn create_cookie_response_gives_a_well_formed_cookie() {
         let jwt = "A_JWT".to_string();
-        let result = create_cookie_response(jwt, "solvastro.com", "sa-auth", "/").into_parts();
+        let result =
+            create_cookie_response(jwt, "solvastro.com", "sa-auth", "/", "localhost").into_parts();
 
-        assert_eq!(result.0.status, 200);
+        assert_eq!(result.0.status, 302);
         assert_eq!(
             result.0.headers.get("set-cookie").unwrap(),
             "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com"

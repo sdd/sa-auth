@@ -5,8 +5,10 @@
         }
     },
     "httpMethod": "GET",
-    "path": "/auth/login",
-    "queryStringParameters": {},
+    "path": "/auth/callback",
+    "queryStringParameters": {
+        "code": "ya29.a0ARrdaM-umzuqnxMqLOx7M3Q0RzKWzpt0geClqa_D5TUwC2UPsmgwNiN6B_gIImH4vNtk20SWUfjfprAPqOE5TW8_XjK2i4LwMFs6DEidEnB4M9uER9XQNDcVeDmldi1zHIPac3k32MvAT-3vKkMFL0HBjxnX"
+    },
     "headers": {
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-encoding": "gzip",

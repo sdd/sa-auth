@@ -28,6 +28,8 @@ pub fn me_handler(
 
                     return Ok(Response::builder()
                         .status(StatusCode::OK)
+                        .header("Access-Control-Allow-Origin", "https://solvastro.com")
+                        .header("Access-Control-Allow-Credentials", "true")
                         .body(body)
                         .unwrap());
                     // } else {
