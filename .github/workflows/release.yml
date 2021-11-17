@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        arch:
+          - x86_64
+          - aarch64
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -23,7 +23,7 @@ jobs:
         with:
           profile: minimal
           toolchain: nightly
-          target: ${{ matrix.target }}
+          target: ${{ matrix.arch }}-unknown-linux-musl
           override: true
       - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
@@ -31,11 +31,11 @@ jobs:
         with:
           command: build
           use-cross: true
-          args: --release --target ${{ matrix.target }}
+          args: --release --target ${{ matrix.arch }}-unknown-linux-musl
       - name: Package artifacts
         uses: montudor/action-zip@v1
         with:
-          args: zip -qq target/lambda-x86_64.zip target/x86_64-unknown-linux-musl/release/bootstrap
+          args: zip -qq target/lambda-${{ matrix.arch }}.zip target/${{ matrix.arch }}-unknown-linux-musl/release/bootstrap
       - name: Setup NodeJS
         uses: actions/setup-node@v1
         with:
