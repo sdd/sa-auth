@@ -4,5 +4,6 @@ members = [
     "sa-auth-model",
     "papo-provider-core",
     "papo-provider-google",
+    "papo-provider-patreon",
     "sa-auth-lambda",
 ]

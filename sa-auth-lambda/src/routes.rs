@@ -1,3 +1,4 @@
+pub(crate) mod authorize_patreon;
 pub(crate) mod callback;
 pub(crate) mod login;
 pub(crate) mod logout;

@@ -1,5 +1,6 @@
 use aws_sdk_dynamodb::Client as DynamodbClient;
 use papo_provider_google::GoogleOAuthProvider;
+use papo_provider_patreon::PatreonOAuthProvider;
 use reqwest::Client as ReqwestClient;
 use sa_auth_model::{DynamoDbIdentityRepository, DynamoDbUserRepository};
 use unique_id::string::StringGenerator;
@@ -39,6 +40,14 @@ impl AppContext {
             &self.cfg.google_oauth_config.redirect_url,
         )
     }
+    pub fn patreon_oauth_provider(&self) -> PatreonOAuthProvider {
+        PatreonOAuthProvider::new(
+            &self.reqwest_client,
+            &self.cfg.patreon_oauth_config.client_id,
+            &self.cfg.patreon_oauth_config.client_secret,
+            &self.cfg.patreon_oauth_config.redirect_url,
+        )
+    }
 
     pub fn identity_repository(&self) -> DynamoDbIdentityRepository {
         DynamoDbIdentityRepository::new(
@@ -63,9 +72,12 @@ mod tests {
     async fn init_context_returns_a_working_context() {
         env::set_var("GOOGLE_CLIENT_ID", "TEST_CLIENT_ID");
         env::set_var("GOOGLE_CLIENT_SECRET", "TEST_CLIENT_SECRET");
+        env::set_var("PATREON_CLIENT_ID", "TEST_CLIENT_ID_P");
+        env::set_var("PATREON_CLIENT_SECRET", "TEST_CLIENT_SECRET_P");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         env::set_var("REDIRECT_URL", "https://localhost/redir");
         env::set_var("SUCCESS_REDIRECT_URL", "https://localhost");
+        env::set_var("PATREON_REDIRECT_URL", "https://localhost/redir");
         env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
         env::set_var("AUTH_COOKIE_NAME", "auth");
         env::set_var("AUTH_COOKIE_PATH", "/");

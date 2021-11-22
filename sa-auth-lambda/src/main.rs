@@ -14,7 +14,7 @@ use log::debug;
 
 use crate::config::AppConfig;
 use crate::context::AppContext;
-use crate::routes::{callback, login, logout, me, not_found};
+use crate::routes::{authorize_patreon, callback, login, logout, me, not_found};
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
@@ -58,6 +58,7 @@ async fn auth_handler(
             "/auth/login" => login::login_handler(req, ctx, app_ctx),
             "/auth/logout" => logout::logout_handler(req, ctx, app_ctx),
             "/auth/callback" => callback::callback_handler(req, ctx, app_ctx).await,
+            "/auth/authorize/patreon" => authorize_patreon::login_patreon_handler(req, ctx, app_ctx),
             "/auth/me" => me::me_handler(req, ctx, app_ctx),
             _ => not_found::not_found_handler(req, ctx, app_ctx),
         }
