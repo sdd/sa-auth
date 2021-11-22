@@ -24,7 +24,7 @@ pub async fn callback_handler(
 
         let token_response = provider.get_token(&code).await?;
         debug!("Good Token Response (scope {:?})", &token_response.scope);
-        let identity = provider.get_identity(&token_response.access_token).await?;
+        let identity: GoogleIdentity = provider.get_identity(&token_response.access_token).await?;
         debug!("Good Identity Response (email {:?})", identity.email);
 
         let user: User = get_or_create_user(

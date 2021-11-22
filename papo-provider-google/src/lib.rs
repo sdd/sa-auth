@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client as ReqwestClient;
 
 use papo_provider_core::{Identity, OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
+use serde::Deserialize;
 
 pub const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
@@ -74,14 +75,17 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
             .await?)
     }
 
-    async fn get_identity(&self, token: &str) -> Result<Identity, PapoProviderError> {
+    async fn get_identity<I: for<'de> Deserialize<'de>>(
+        &self,
+        token: &str,
+    ) -> Result<I, PapoProviderError> {
         Ok(self
             .reqwest_client
             .get(self.identity_url)
             .bearer_auth(token)
             .send()
             .await?
-            .json::<Identity>()
+            .json::<I>()
             .await?)
     }
 }
@@ -125,7 +129,7 @@ mod tests {
         .with_identity_url(&identity_url);
 
         let token = "TEST_TOKEN";
-        let result = provider.get_identity(token).await.unwrap();
+        let result: Identity = provider.get_identity(token).await.unwrap();
 
         assert_eq!(result.id, "TEST_GOOG_ID");
     }

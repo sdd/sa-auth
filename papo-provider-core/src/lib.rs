@@ -40,5 +40,8 @@ pub enum PapoProviderError {
 pub trait OAuthProvider {
     fn get_login_url(&self, redirect_url: &str) -> String;
     async fn get_token(&self, code: &str) -> Result<TokenResponse, PapoProviderError>;
-    async fn get_identity(&self, token: &str) -> Result<Identity, PapoProviderError>;
+    async fn get_identity<I: for<'de> Deserialize<'de>>(
+        &self,
+        token: &str,
+    ) -> Result<I, PapoProviderError>;
 }
