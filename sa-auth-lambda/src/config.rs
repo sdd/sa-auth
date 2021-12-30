@@ -15,6 +15,9 @@ pub struct AppConfig {
     pub auth_cookie_name: String,
     pub auth_cookie_path: String,
     pub auth_cookie_domain: String,
+
+    pub table_name_users: String,
+    pub table_name_identities: String,
 }
 
 impl AppConfig {
@@ -32,6 +35,11 @@ impl AppConfig {
         let auth_cookie_domain =
             env::var("AUTH_COOKIE_DOMAIN").expect("Missing AUTH_COOKIE_DOMAIN env var");
 
+        let table_name_identities =
+            env::var("TABLE_NAME_IDENTITIES").expect("Missing TABLE_NAME_IDENTITIES env var");
+        let table_name_users =
+            env::var("TABLE_NAME_USERS").expect("Missing TABLE_NAME_USERS env var");
+
         let google_oauth_config = GoogleOAuthConfig {
             client_id,
             client_secret,
@@ -44,6 +52,9 @@ impl AppConfig {
             auth_cookie_domain,
             auth_cookie_name,
             auth_cookie_path,
+
+            table_name_identities,
+            table_name_users,
         }
     }
 }
@@ -61,6 +72,9 @@ mod tests {
         env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
         env::set_var("AUTH_COOKIE_NAME", "auth");
         env::set_var("AUTH_COOKIE_PATH", "/");
+        env::set_var("TABLE_NAME_IDENTITIES", "sa-identities");
+        env::set_var("TABLE_NAME_USERS", "sa-users");
+
         let result = AppConfig::new();
 
         assert_eq!(result.google_oauth_config.client_id, "TEST_CLIENT_ID");
