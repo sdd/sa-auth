@@ -39,7 +39,7 @@ async fn auth_handler(
         Ok(Response::builder()
             .status(StatusCode::OK)
             .header("Access-Control-Allow-Credentials", "true")
-            .header("Access-Control-Allow-Origin", "https://solvastro.com")
+            .header("Access-Control-Allow-Origin", format!("https://{}", &app_ctx.cfg.auth_cookie_domain))
             .header(
                 "Access-Control-Allow-Headers",
                 "Accept,Authorization,Cookie,Content-Type",
