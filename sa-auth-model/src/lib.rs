@@ -10,9 +10,6 @@ use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkErro
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
-const DYNAMODB_TABLE_IDENTITIES: &'static str = "solvastro-identities";
-const DYNAMODB_TABLE_USERS: &'static str = "solvastro-users";
-
 #[derive(Deserialize, Debug)]
 pub struct Identity {
     pub id: String,
@@ -178,10 +175,10 @@ pub struct DynamoDbIdentityRepository<'a> {
 }
 
 impl<'a> DynamoDbIdentityRepository<'a> {
-    pub fn new(client: &DynamodbClient) -> DynamoDbIdentityRepository {
+    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbIdentityRepository {
         DynamoDbIdentityRepository {
             client,
-            table_name: DYNAMODB_TABLE_IDENTITIES.into(),
+            table_name: table_name.into(),
         }
     }
 }
@@ -228,10 +225,10 @@ pub struct DynamoDbUserRepository<'a> {
 }
 
 impl<'a> DynamoDbUserRepository<'a> {
-    pub fn new(client: &DynamodbClient) -> DynamoDbUserRepository {
+    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbUserRepository {
         DynamoDbUserRepository {
             client,
-            table_name: DYNAMODB_TABLE_USERS.into(),
+            table_name: table_name.into(),
         }
     }
 }
