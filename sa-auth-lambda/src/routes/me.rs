@@ -28,7 +28,10 @@ pub fn me_handler(
 
                     return Ok(Response::builder()
                         .status(StatusCode::OK)
-                        .header("Access-Control-Allow-Origin", format!("https://{}", &app_ctx.cfg.auth_cookie_domain))
+                        .header(
+                            "Access-Control-Allow-Origin",
+                            format!("https://{}", &app_ctx.cfg.auth_cookie_domain),
+                        )
                         .header("Access-Control-Allow-Credentials", "true")
                         .body(body)
                         .unwrap());
@@ -48,7 +51,10 @@ pub fn me_handler(
 
     Ok(Response::builder()
         .status(StatusCode::UNAUTHORIZED)
-        .header("Access-Control-Allow-Origin", format!("https://{}", &app_ctx.cfg.auth_cookie_domain))
+        .header(
+            "Access-Control-Allow-Origin",
+            format!("https://{}", &app_ctx.cfg.auth_cookie_domain),
+        )
         .header("Access-Control-Allow-Credentials", "true")
         .body("401 Not Authorized".to_string())
         .unwrap())

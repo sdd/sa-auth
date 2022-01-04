@@ -41,7 +41,10 @@ impl AppContext {
     }
 
     pub fn identity_repository(&self) -> DynamoDbIdentityRepository {
-        DynamoDbIdentityRepository::new(&self.dynamodb_client, self.cfg.table_name_identities.to_owned())
+        DynamoDbIdentityRepository::new(
+            &self.dynamodb_client,
+            self.cfg.table_name_identities.to_owned(),
+        )
     }
 
     pub fn user_repository(&self) -> DynamoDbUserRepository {
