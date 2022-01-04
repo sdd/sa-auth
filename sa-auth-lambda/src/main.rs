@@ -3,7 +3,7 @@ mod context;
 mod error;
 mod routes;
 
-use lambda_http::http::{header, StatusCode};
+use lambda_http::http::StatusCode;
 use lambda_http::lambda_runtime::Error;
 use lambda_http::{
     handler,
