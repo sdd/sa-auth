@@ -8,6 +8,7 @@ use unique_id::Generator;
 
 use log::{debug, warn};
 use papo_provider_core::{Identity as GoogleIdentity, OAuthProvider};
+use papo_provider_patreon::PatronStatus;
 use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User, UserRepository};
 
 use crate::context::AppContext;
@@ -35,7 +36,13 @@ pub async fn callback_handler(
         )
         .await?;
         debug!("Good User Response (user_id={:?}", &user.id);
-        let jwt = create_jwt(&user.id, &user.role, app_ctx.cfg.jwt_secret.as_bytes())?;
+        let jwt = create_jwt(
+            &user.id,
+            &user.role,
+            app_ctx.cfg.jwt_secret.as_bytes(),
+            false,
+            false,
+        )?;
 
         Ok(create_cookie_response(
             jwt,
@@ -124,6 +131,9 @@ pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(
                 name: identity.name.clone(),
                 email: identity.email.clone(),
                 role: Role::User,
+
+                patreon_status: PatronStatus::Declined,
+                patreon_connected: false,
             };
 
             user_repo.insert(&user).await?;
@@ -139,7 +149,13 @@ pub async fn get_or_create_user<I: IdentityRepository, U: UserRepository>(
     }
 }
 
-pub fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthServiceError> {
+pub fn create_jwt(
+    uid: &str,
+    role: &Role,
+    secret: &[u8],
+    pc: bool,
+    ps: bool,
+) -> Result<String, AuthServiceError> {
     let expiration = Utc::now()
         .checked_add_signed(chrono::Duration::seconds(3600))
         .expect("valid timestamp")
@@ -148,6 +164,8 @@ pub fn create_jwt(uid: &str, role: &Role, secret: &[u8]) -> Result<String, AuthS
     let claims = Claims {
         sub: uid.to_owned(),
         role: role.to_string(),
+        pc,
+        ps,
         exp: expiration as usize,
     };
 
@@ -202,6 +220,8 @@ mod tests {
                         name: "MCBOB BUTTERSCHNITZ".to_string(),
                         email: "mcbob@butterschnitz.com".to_string(),
                         role: Role::User,
+                        patreon_status: PatronStatus::Declined,
+                        patreon_connected: false,
                     })
                 } else {
                     None
@@ -329,6 +349,8 @@ mod tests {
                     name: "Norman McDingleton".to_string(),
                     email: "norman@gmail.com".to_string(),
                     role: Role::User,
+                    patreon_status: PatronStatus::Declined,
+                    patreon_connected: false,
                 }))
             }
 
@@ -429,7 +451,7 @@ mod tests {
 
         let jwt_secret = b"secret";
 
-        let jwt = create_jwt(uid, &role, jwt_secret).unwrap();
+        let jwt = create_jwt(uid, &role, jwt_secret, false, false).unwrap();
 
         let expected = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9";
         assert_eq!(jwt.split('.').collect::<Vec<_>>()[0], expected);

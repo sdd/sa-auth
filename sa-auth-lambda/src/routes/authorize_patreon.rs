@@ -1,7 +1,6 @@
 use lambda_http::http::{header, StatusCode};
 use lambda_http::{Context, Request, Response};
 use papo_provider_core::OAuthProvider;
-use std::env;
 
 use crate::context::AppContext;
 use crate::Error;
@@ -41,10 +40,15 @@ mod tests {
         env::set_var("PATREON_CLIENT_SECRET", "TEST_CLIENT_SECRET_P");
         env::set_var("JWT_SECRET", "TEST_JWT_SECRET");
         env::set_var("REDIRECT_URL", "https://localhost/redir");
+        env::set_var("SUCCESS_REDIRECT_URL", "https://localhost/");
         env::set_var("PATREON_REDIRECT_URL", "https://localhost/redir");
         env::set_var("AUTH_COOKIE_DOMAIN", "localhost");
         env::set_var("AUTH_COOKIE_NAME", "auth");
         env::set_var("AUTH_COOKIE_PATH", "/");
+        env::set_var("TABLE_NAME_IDENTITIES", "sa-identities");
+        env::set_var("TABLE_NAME_USERS", "sa-users");
+        env::set_var("TABLE_NAME_PATREON_TOKENS", "sa-patreon-tokens");
+        env::set_var("PATREON_SUPPORT_CAMPAIGN_ID", "TEST_CAMPAIGN_ID");
         let cfg = AppConfig::new();
         let app_ctx = AppContext::new(cfg).await;
 
@@ -54,6 +58,6 @@ mod tests {
 
         let result = login_patreon_handler(req, ctx, &app_ctx).unwrap();
         assert_eq!(result.status(), StatusCode::FOUND);
-        assert_eq!(result.headers().get("location").unwrap(), "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fsolvastro.com%2Fauth%2Fcallback&prompt=consent&response_type=code&client_id=TEST_CLIENT_ID&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&access_type=offline");
+        assert_eq!(result.headers().get("location").unwrap(), "https://www.patreon.com/oauth2/authorize?redirect_uri=https%3A%2F%2Flocalhost%2Fredir&response_type=code&client_id=TEST_CLIENT_ID_P&scope=identity%20identity%5Bemail%5D");
     }
 }

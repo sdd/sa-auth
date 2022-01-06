@@ -1,13 +1,17 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
+use log::trace;
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use papo_provider_core::{OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
 
-pub const PATREON_ENDPOINT_TOKEN: &'static str = "https://www.patreon.com/api/oauth2/token";
-pub const PATREON_ENDPOINT_IDENTITY: &'static str = "https://www.patreon.com/api/oauth2/v2/identity?fields[user]=created,email,full_name,thumb_url,is_email_verified&fields[memberships]=patron_status";
-pub const PATREON_IDENTITY_PREFIX: &'static str = "PATREON";
+pub const PATREON_ENDPOINT_TOKEN: &str = "https://www.patreon.com/api/oauth2/token";
+pub const PATREON_ENDPOINT_IDENTITY: &str = "https://www.patreon.com/api/oauth2/v2/identity?include=memberships&fields%5Buser%5D=created,email,full_name,thumb_url,is_email_verified&fields%5Bmember%5D=patron_status";
+pub const PATREON_IDENTITY_PREFIX: &str = "PATREON";
+
+pub const PATREON_SA_CAMPAIGN_ID: &str = "";
 
 // fields[user]=created,email,full_name,thumb_url,is_email_verified
 // fields[memberships]=patron_status
@@ -25,9 +29,25 @@ pub struct PatreonOAuthProvider<'a> {
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
 pub enum PatronStatus {
+    #[serde(alias = "active_patron")]
     Active,
+    #[serde(alias = "declined_patron")]
     Declined,
+    #[serde(alias = "former_patron")]
     Former,
+}
+
+impl PatronStatus {
+    pub fn from_str(role: &str) -> PatronStatus {
+        match role {
+            "Active" => PatronStatus::Active,
+            "active_patron" => PatronStatus::Active,
+            "Former" => PatronStatus::Former,
+            "former_patron" => PatronStatus::Former,
+            "declined_patron" => PatronStatus::Declined,
+            _ => PatronStatus::Declined,
+        }
+    }
 }
 
 impl fmt::Display for PatronStatus {
@@ -40,15 +60,90 @@ impl fmt::Display for PatronStatus {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct PatreonToken {
+    pub id: String,         // sa user id
+    pub patreon_id: String, // patreon user id
+    pub access_token: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub refresh_token: String,
+    pub scope: String,
+}
+
+impl PatreonToken {
+    pub fn from_token_response(resp: TokenResponse, patron_id: &str, user_id: &str) -> Self {
+        PatreonToken {
+            id: user_id.to_string(),
+            patreon_id: patron_id.to_string(),
+            access_token: resp.access_token,
+            refresh_token: resp.refresh_token,
+            scope: resp.scope,
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::seconds(resp.expires_in as i64),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Serialize)]
-pub struct PatreonIdentity {
-    id: String,
-    created: String,
-    email: String,
-    full_name: String,
-    thumb_url: String,
-    is_email_verified: bool,
-    patron_status: PatronStatus,
+pub struct PatreonIdentityResponse {
+    pub data: PatreonIdentityResponseData,
+    pub included: Vec<CampaignMembership>,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+pub struct PatreonIdentityResponseData {
+    pub id: String,
+    pub attributes: PatreonIdentityAttributes,
+}
+
+impl PatreonIdentityResponse {
+    pub fn status_for_membership_id(&self, campaign_id: &str) -> PatronStatus {
+        self.included
+            .iter()
+            .find(|&c| c.id.eq(campaign_id))
+            .map_or(PatronStatus::Declined, |c| {
+                c.attributes.patron_status.clone()
+            })
+    }
+
+    pub fn best_patron_status(&self) -> PatronStatus {
+        if self
+            .included
+            .iter()
+            .any(|c| c.attributes.patron_status == PatronStatus::Active)
+        {
+            PatronStatus::Active
+        } else if self
+            .included
+            .iter()
+            .any(|c| c.attributes.patron_status == PatronStatus::Former)
+        {
+            PatronStatus::Former
+        } else {
+            PatronStatus::Declined
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+pub struct PatreonIdentityAttributes {
+    pub created: DateTime<Utc>,
+    pub email: String,
+    pub full_name: String,
+    pub is_email_verified: bool,
+    pub thumb_url: String,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+pub struct CampaignMembership {
+    pub id: String,
+    pub attributes: CampaignMembershipAttributes,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+pub struct CampaignMembershipAttributes {
+    pub patron_status: PatronStatus,
 }
 
 impl<'a> PatreonOAuthProvider<'a> {
@@ -83,7 +178,11 @@ impl<'a> PatreonOAuthProvider<'a> {
 #[async_trait]
 impl OAuthProvider for PatreonOAuthProvider<'_> {
     fn get_login_url(&self, redirect_url: &str) -> String {
-        let raw_scopes = ["identity", "identity[email]", "identity.memberships"].join(" ");
+        let raw_scopes = [
+            "identity",
+            "identity[email]", /*, "identity.memberships"*/
+        ]
+        .join(" ");
 
         let scope = urlencoding::encode(&raw_scopes);
 
@@ -98,9 +197,9 @@ impl OAuthProvider for PatreonOAuthProvider<'_> {
     async fn get_token(&self, code: &str) -> Result<TokenResponse, PapoProviderError> {
         let token_request = TokenRequest {
             code,
-            client_id: &self.client_id,
-            client_secret: &self.client_secret,
-            redirect_uri: &self.redirect_url,
+            client_id: self.client_id,
+            client_secret: self.client_secret,
+            redirect_uri: self.redirect_url,
             grant_type: "authorization_code",
         };
 
@@ -118,20 +217,74 @@ impl OAuthProvider for PatreonOAuthProvider<'_> {
         &self,
         token: &str,
     ) -> Result<I, PapoProviderError> {
-        Ok(self
+        let response = self
             .reqwest_client
             .get(self.identity_url)
             .bearer_auth(token)
             .send()
-            .await?
-            .json::<I>()
-            .await?)
+            .await?;
+
+        let text = response.text().await;
+        trace!("patreon identity response: {:?}", &text);
+
+        Ok(serde_json::from_str(&text?)?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_patreon_response_deserialization() {
+        let raw_response = r#"{
+  "data": {
+    "attributes": {
+      "created": "2022-01-06T09:46:51.000+00:00",
+      "email": "TEST_EMAIL",
+      "full_name": "Testy McTestFace",
+      "is_email_verified": true,
+      "thumb_url": "https://c8.patreon.com/2/200/TEST_ID"
+    },
+    "id": "TEST_ID",
+    "relationships": {
+      "memberships": {
+        "data": [
+          {
+            "id": "TEST_MEMBERSHIP_ID",
+            "type": "member"
+          }
+        ]
+      }
+    },
+    "type": "user"
+  },
+  "included": [
+    {
+      "attributes": {
+        "patron_status": "active_patron"
+      },
+      "id": "TEST_MEMBERSHIP_ID",
+      "type": "member"
+    }
+  ],
+  "links": {
+    "self": "https://www.patreon.com/api/oauth2/v2/user/TEST_ID"
+  }
+}
+        "#;
+
+        let obj: PatreonIdentityResponse = serde_json::from_str(raw_response).unwrap();
+
+        assert_eq!(obj.data.id, "TEST_ID");
+        assert_eq!(obj.data.attributes.email, "TEST_EMAIL");
+        assert_eq!(obj.included[0].id, "TEST_MEMBERSHIP_ID");
+        assert_eq!(
+            obj.included[0].attributes.patron_status,
+            PatronStatus::Active
+        );
+    }
 
     #[tokio::test]
     async fn test_patreon_oauth_provider_get_identity_works() {
@@ -139,14 +292,31 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock_server = MockServer::start().await;
 
-        let mock_identity = PatreonIdentity {
-            full_name: "TEST_PATREON_NAME".to_string(),
-            thumb_url: ":-)".to_string(),
-            email: "TEST_PATREON_EMAIL".to_string(),
-            id: "TEST_PATREON_ID".to_string(),
-            is_email_verified: false,
-            created: "2021-01-01T00:00:00.000Z".to_string(),
-            patron_status: PatronStatus::Active,
+        let mock_identity = PatreonIdentityResponse {
+            data: PatreonIdentityResponseData {
+                id: "TEST_PATREON_ID".to_string(),
+                attributes: PatreonIdentityAttributes {
+                    created: Utc.ymd(2022, 1, 5).and_hms_milli(17, 40, 0, 123),
+                    email: "TEST_PATREON_EMAIL".to_string(),
+                    full_name: "TEST_PATREON_NAME".to_string(),
+                    is_email_verified: true,
+                    thumb_url: "TEST_PATREON_THUMB_URL".to_string(),
+                },
+            },
+            included: vec![
+                CampaignMembership {
+                    id: "ANOTHER_CAMPAIGN".to_string(),
+                    attributes: CampaignMembershipAttributes {
+                        patron_status: PatronStatus::Former,
+                    },
+                },
+                CampaignMembership {
+                    id: "OUR_CAMPAIGN".to_string(),
+                    attributes: CampaignMembershipAttributes {
+                        patron_status: PatronStatus::Active,
+                    },
+                },
+            ],
         };
 
         Mock::given(method("GET"))
@@ -170,9 +340,21 @@ mod tests {
         .with_identity_url(&identity_url);
 
         let token = "TEST_TOKEN";
-        let result: PatreonIdentity = provider.get_identity(token).await.unwrap();
+        let result: PatreonIdentityResponse = provider.get_identity(token).await.unwrap();
 
-        assert_eq!(result.id, "TEST_PATREON_ID");
-        assert_eq!(result.patron_status, PatronStatus::Active);
+        assert_eq!(result.data.id, "TEST_PATREON_ID");
+        assert_eq!(
+            result.status_for_membership_id("OUR_CAMPAIGN"),
+            PatronStatus::Active
+        );
+        assert_eq!(result.best_patron_status(), PatronStatus::Active);
+        assert_eq!(
+            result.status_for_membership_id("ANOTHER_CAMPAIGN"),
+            PatronStatus::Former
+        );
+        assert_eq!(
+            result.status_for_membership_id("NON_EXISTENT_CAMPAIGN"),
+            PatronStatus::Declined
+        );
     }
 }

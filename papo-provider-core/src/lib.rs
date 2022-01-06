@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Error as ReqwestError;
 use serde::{Deserialize, Serialize};
+use serde_json::Error as SerdeJsonError;
 use thiserror::Error as ThisError;
 
 #[derive(Serialize, Debug)]
@@ -23,6 +24,7 @@ pub struct TokenResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Identity {
+    #[serde(default)]
     pub name: String,
     pub picture: String,
     pub email: String,
@@ -34,6 +36,9 @@ pub struct Identity {
 pub enum PapoProviderError {
     #[error("request error")]
     RequestError(#[from] ReqwestError),
+
+    #[error("serde error")]
+    SerdeJsonError(#[from] SerdeJsonError),
 }
 
 #[async_trait]

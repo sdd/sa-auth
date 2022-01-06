@@ -27,6 +27,9 @@ pub struct AppConfig {
 
     pub table_name_users: String,
     pub table_name_identities: String,
+    pub table_name_patreon_tokens: String,
+
+    pub patreon_support_campaign_id: String,
 }
 
 impl AppConfig {
@@ -58,6 +61,11 @@ impl AppConfig {
             env::var("TABLE_NAME_IDENTITIES").expect("Missing TABLE_NAME_IDENTITIES env var");
         let table_name_users =
             env::var("TABLE_NAME_USERS").expect("Missing TABLE_NAME_USERS env var");
+        let table_name_patreon_tokens = env::var("TABLE_NAME_PATREON_TOKENS")
+            .expect("Missing TABLE_NAME_PATREON_TOKENS env var");
+
+        let patreon_support_campaign_id = env::var("PATREON_SUPPORT_CAMPAIGN_ID")
+            .expect("Missing PATREON_SUPPORT_CAMPAIGN_ID env var");
 
         let google_oauth_config = GoogleOAuthConfig {
             client_id,
@@ -82,6 +90,9 @@ impl AppConfig {
 
             table_name_identities,
             table_name_users,
+            table_name_patreon_tokens,
+
+            patreon_support_campaign_id,
         }
     }
 }
@@ -105,6 +116,8 @@ mod tests {
         env::set_var("AUTH_COOKIE_PATH", "/");
         env::set_var("TABLE_NAME_IDENTITIES", "sa-identities");
         env::set_var("TABLE_NAME_USERS", "sa-users");
+        env::set_var("TABLE_NAME_PATREON_TOKENS", "sa-patreon-tokens");
+        env::set_var("PATREON_SUPPORT_CAMPAIGN_ID", "TEST_CAMPAIGN_ID");
 
         let result = AppConfig::new();
 

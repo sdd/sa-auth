@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
 use aws_sdk_dynamodb::model::AttributeValue;
 use aws_sdk_dynamodb::output::PutItemOutput;
 use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
+use chrono::DateTime;
+use papo_provider_patreon::{PatreonToken, PatronStatus};
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -45,6 +48,8 @@ impl fmt::Display for Role {
 pub struct Claims {
     pub sub: String,
     pub role: String,
+    pub pc: bool, // patreon connected
+    pub ps: bool, // patreon supporter
     pub exp: usize,
 }
 
@@ -54,6 +59,8 @@ pub struct User {
     pub name: String,
     pub email: String,
     pub role: Role,
+    pub patreon_status: PatronStatus,
+    pub patreon_connected: bool,
 }
 
 impl TryFrom<HashMap<String, AttributeValue>> for User {
@@ -68,12 +75,36 @@ impl TryFrom<HashMap<String, AttributeValue>> for User {
                             if let Ok(email) = email.as_s() {
                                 if let Some(role) = user.get("role") {
                                     if let Ok(role) = role.as_s() {
-                                        Ok(User {
-                                            id: id.clone(),
-                                            name: name.clone(),
-                                            email: email.clone(),
-                                            role: Role::from_str(role),
-                                        })
+                                        if let Some(patreon_status) = user.get("patreon_status") {
+                                            if let Ok(patreon_status) = patreon_status.as_s() {
+                                                if let Some(patreon_connected) =
+                                                    user.get("patreon_connected")
+                                                {
+                                                    if let Ok(&patreon_connected) =
+                                                        patreon_connected.as_bool()
+                                                    {
+                                                        Ok(User {
+                                                            id: id.clone(),
+                                                            name: name.clone(),
+                                                            email: email.clone(),
+                                                            role: Role::from_str(role),
+                                                            patreon_connected,
+                                                            patreon_status: PatronStatus::from_str(
+                                                                patreon_status,
+                                                            ),
+                                                        })
+                                                    } else {
+                                                        Err(UserParseError::PatConNotABool)
+                                                    }
+                                                } else {
+                                                    Err(UserParseError::MissingPatCon)
+                                                }
+                                            } else {
+                                                Err(UserParseError::PatStatNotAString)
+                                            }
+                                        } else {
+                                            Err(UserParseError::MissingPatStat)
+                                        }
                                     } else {
                                         Err(UserParseError::RoleNotAString)
                                     }
@@ -119,6 +150,15 @@ pub enum UserParseError {
     MissingRole,
     #[error("Role not a string")]
     RoleNotAString,
+
+    #[error("Missing PatreonStatus")]
+    MissingPatStat,
+    #[error("PatreonStatus not a string")]
+    PatStatNotAString,
+    #[error("Missing PatreonConnection")]
+    MissingPatCon,
+    #[error("PatreonConnection not a bool")]
+    PatConNotABool,
 }
 
 #[derive(ThisError, Debug)]
@@ -163,6 +203,12 @@ pub trait IdentityRepository {
 }
 
 #[async_trait]
+pub trait PatreonTokenRepository {
+    async fn get_by_user_id(&self, user_id: &str) -> Result<Option<PatreonToken>, ModelError>;
+    async fn insert(&self, record: &PatreonToken) -> Result<PutItemOutput, SdkError<PutItemError>>;
+}
+
+#[async_trait]
 pub trait UserRepository {
     async fn get_by_id(&self, id: &str) -> Result<Option<User>, ModelError>;
     async fn get_by_email(&self, id: &str) -> Result<Option<User>, ModelError>;
@@ -176,10 +222,7 @@ pub struct DynamoDbIdentityRepository<'a> {
 
 impl<'a> DynamoDbIdentityRepository<'a> {
     pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbIdentityRepository {
-        DynamoDbIdentityRepository {
-            client,
-            table_name: table_name.into(),
-        }
+        DynamoDbIdentityRepository { client, table_name }
     }
 }
 
@@ -191,7 +234,7 @@ impl IdentityRepository for DynamoDbIdentityRepository<'_> {
         identity_prefix: &str,
     ) -> Result<Option<Identity>, ModelError> {
         let id = format!("{}:{}", identity_prefix, id);
-        if let Some(identity) = dynamodb_get_by_id(&self.client, &self.table_name, &id).await? {
+        if let Some(identity) = dynamodb_get_by_id(self.client, &self.table_name, &id).await? {
             Ok(Some(Identity {
                 id: identity.get("id").unwrap().as_s().unwrap().clone(),
                 user_id: identity.get("user_id").unwrap().as_s().unwrap().clone(),
@@ -200,6 +243,7 @@ impl IdentityRepository for DynamoDbIdentityRepository<'_> {
             Ok(None)
         }
     }
+
     async fn insert(
         &self,
         identity: &Identity,
@@ -226,17 +270,14 @@ pub struct DynamoDbUserRepository<'a> {
 
 impl<'a> DynamoDbUserRepository<'a> {
     pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbUserRepository {
-        DynamoDbUserRepository {
-            client,
-            table_name: table_name.into(),
-        }
+        DynamoDbUserRepository { client, table_name }
     }
 }
 
 #[async_trait]
 impl UserRepository for DynamoDbUserRepository<'_> {
     async fn get_by_id(&self, id: &str) -> Result<Option<User>, ModelError> {
-        if let Some(user) = dynamodb_get_by_id(&self.client, &self.table_name, &id).await? {
+        if let Some(user) = dynamodb_get_by_id(self.client, &self.table_name, id).await? {
             Ok(Some(user.try_into()?))
         } else {
             Ok(None)
@@ -273,6 +314,94 @@ impl UserRepository for DynamoDbUserRepository<'_> {
             .item("name", AttributeValue::S(String::from(&user.name)))
             .item("email", AttributeValue::S(String::from(&user.email)))
             .item("role", AttributeValue::S(format!("{:?}", &user.role)))
+            .item(
+                "patreon_connected",
+                AttributeValue::Bool(user.patreon_connected),
+            )
+            .item(
+                "patreon_status",
+                AttributeValue::S(format!("{:?}", &user.patreon_status)),
+            )
+            .send()
+            .await
+    }
+}
+
+pub struct DynamoDbPatreonTokenRepository<'a> {
+    client: &'a DynamodbClient,
+    table_name: String,
+}
+
+impl<'a> DynamoDbPatreonTokenRepository<'a> {
+    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbPatreonTokenRepository {
+        DynamoDbPatreonTokenRepository { client, table_name }
+    }
+}
+
+#[async_trait]
+impl PatreonTokenRepository for DynamoDbPatreonTokenRepository<'_> {
+    async fn get_by_user_id(&self, user_id: &str) -> Result<Option<PatreonToken>, ModelError> {
+        if let Some(identity) = dynamodb_get_by_id(self.client, &self.table_name, user_id).await? {
+            Ok(Some(PatreonToken {
+                id: identity.get("id").unwrap().as_s().unwrap().clone(),
+                patreon_id: identity.get("patreon_id").unwrap().as_s().unwrap().clone(),
+                access_token: identity
+                    .get("access_token")
+                    .unwrap()
+                    .as_s()
+                    .unwrap()
+                    .clone(),
+                refresh_token: identity
+                    .get("refresh_token")
+                    .unwrap()
+                    .as_s()
+                    .unwrap()
+                    .clone(),
+                scope: identity.get("scope").unwrap().as_s().unwrap().clone(),
+                created_at: DateTime::from(
+                    DateTime::parse_from_rfc3339(
+                        identity.get("created_at").unwrap().as_s().unwrap(),
+                    )
+                    .unwrap(),
+                ),
+                expires_at: DateTime::from(
+                    DateTime::parse_from_rfc3339(
+                        identity.get("expires_at").unwrap().as_s().unwrap(),
+                    )
+                    .unwrap(),
+                ),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn insert(&self, token: &PatreonToken) -> Result<PutItemOutput, SdkError<PutItemError>> {
+        self.client
+            .put_item()
+            .table_name(&self.table_name)
+            .item("id", AttributeValue::S(String::from(&token.id)))
+            .item(
+                "patreon_id",
+                AttributeValue::S(String::from(&token.patreon_id)),
+            )
+            .item(
+                "access_token",
+                AttributeValue::S(String::from(&token.access_token)),
+            )
+            .item(
+                "refresh_token",
+                AttributeValue::S(String::from(&token.refresh_token)),
+            )
+            .item("scope", AttributeValue::S(String::from(&token.scope)))
+            .item(
+                "created_at",
+                AttributeValue::S(token.created_at.to_rfc3339()),
+            )
+            .item(
+                "expires_at",
+                AttributeValue::S(token.expires_at.to_rfc3339()),
+            )
             .send()
             .await
     }

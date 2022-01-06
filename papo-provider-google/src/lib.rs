@@ -1,12 +1,13 @@
 use async_trait::async_trait;
+use log::trace;
 use reqwest::Client as ReqwestClient;
 
-use papo_provider_core::{Identity, OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
+use papo_provider_core::{OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
 use serde::Deserialize;
 
-pub const GOOGLE_ENDPOINT_TOKEN: &'static str = "https://oauth2.googleapis.com/token";
-pub const GOOGLE_ENDPOINT_IDENTITY: &'static str = "https://www.googleapis.com/userinfo/v2/me";
-pub const GOOGLE_IDENTITY_PREFIX: &'static str = "GOOG";
+pub const GOOGLE_ENDPOINT_TOKEN: &str = "https://oauth2.googleapis.com/token";
+pub const GOOGLE_ENDPOINT_IDENTITY: &str = "https://www.googleapis.com/userinfo/v2/me";
+pub const GOOGLE_IDENTITY_PREFIX: &str = "GOOG";
 
 pub struct GoogleOAuthProvider<'a> {
     reqwest_client: &'a ReqwestClient,
@@ -59,9 +60,9 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
     async fn get_token(&self, code: &str) -> Result<TokenResponse, PapoProviderError> {
         let token_request = TokenRequest {
             code,
-            client_id: &self.client_id,
-            client_secret: &self.client_secret,
-            redirect_uri: &self.redirect_url,
+            client_id: self.client_id,
+            client_secret: self.client_secret,
+            redirect_uri: self.redirect_url,
             grant_type: "authorization_code",
         };
 
@@ -79,20 +80,24 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
         &self,
         token: &str,
     ) -> Result<I, PapoProviderError> {
-        Ok(self
+        let response = self
             .reqwest_client
             .get(self.identity_url)
             .bearer_auth(token)
             .send()
-            .await?
-            .json::<I>()
-            .await?)
+            .await?;
+
+        let text = response.text().await;
+        trace!("identity response: {:?}", &text);
+
+        Ok(serde_json::from_str(&text?)?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use papo_provider_core::Identity;
 
     #[tokio::test]
     async fn test_google_oauth_provider_get_identity_works() {
