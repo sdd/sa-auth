@@ -5,12 +5,18 @@ use crate::context::AppContext;
 use crate::Error;
 
 pub fn not_found_handler(
-    _: Request,
+    req: Request,
     _: Context,
     _: &AppContext,
 ) -> Result<Response<String>, Error> {
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
+        .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
+        .header("Access-Control-Allow-Credentials", "true")
+        .header(
+            "Access-Control-Allow-Headers",
+            "Accept,Authorization,Cookie,Content-Type",
+        )
         .body("404 Not Found".to_string())
         .unwrap())
 }
