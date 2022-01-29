@@ -87,12 +87,24 @@ pub async fn patreon_callback_handler(
         } else {
             Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
+                .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
+                .header("Access-Control-Allow-Credentials", "true")
+                .header(
+                    "Access-Control-Allow-Headers",
+                    "Accept,Authorization,Cookie,Content-Type",
+                )
                 .body("Missing code parameter".to_string())
                 .unwrap())
         }
     } else {
         Ok(Response::builder()
             .status(StatusCode::UNAUTHORIZED)
+            .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
+            .header("Access-Control-Allow-Credentials", "true")
+            .header(
+                "Access-Control-Allow-Headers",
+                "Accept,Authorization,Cookie,Content-Type",
+            )
             .body("401 Not Authorized".to_string())
             .unwrap())
     }
