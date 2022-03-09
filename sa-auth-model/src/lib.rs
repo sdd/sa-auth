@@ -370,6 +370,12 @@ impl PatreonTokenRepository for DynamoDbPatreonTokenRepository<'_> {
                     )
                     .unwrap(),
                 ),
+                updated_at: DateTime::from(
+                    DateTime::parse_from_rfc3339(
+                        identity.get("updated_at").unwrap().as_s().unwrap(),
+                    )
+                    .unwrap(),
+                ),
             }))
         } else {
             Ok(None)
@@ -401,6 +407,10 @@ impl PatreonTokenRepository for DynamoDbPatreonTokenRepository<'_> {
             .item(
                 "expires_at",
                 AttributeValue::S(token.expires_at.to_rfc3339()),
+            )
+            .item(
+                "updated_at",
+                AttributeValue::S(token.updated_at.to_rfc3339()),
             )
             .send()
             .await

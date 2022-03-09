@@ -76,6 +76,22 @@ impl OAuthProvider for GoogleOAuthProvider<'_> {
             .await?)
     }
 
+    async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse, PapoProviderError> {
+        Ok(self
+            .reqwest_client
+            .post(self.token_url)
+            .query(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+                ("client_id", self.client_id),
+                ("client_secret", self.client_secret),
+            ])
+            .send()
+            .await?
+            .json::<TokenResponse>()
+            .await?)
+    }
+
     async fn get_identity<I: for<'de> Deserialize<'de>>(
         &self,
         token: &str,

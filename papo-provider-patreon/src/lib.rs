@@ -67,6 +67,7 @@ pub struct PatreonToken {
     pub access_token: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub refresh_token: String,
     pub scope: String,
 }
@@ -81,6 +82,7 @@ impl PatreonToken {
             scope: resp.scope,
             created_at: Utc::now(),
             expires_at: Utc::now() + Duration::seconds(resp.expires_in as i64),
+            updated_at: Utc::now(),
         }
     }
 }
@@ -207,6 +209,22 @@ impl OAuthProvider for PatreonOAuthProvider<'_> {
             .reqwest_client
             .post(self.token_url)
             .form(&token_request)
+            .send()
+            .await?
+            .json::<TokenResponse>()
+            .await?)
+    }
+
+    async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse, PapoProviderError> {
+        Ok(self
+            .reqwest_client
+            .post(self.token_url)
+            .query(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+                ("client_id", self.client_id),
+                ("client_secret", self.client_secret),
+            ])
             .send()
             .await?
             .json::<TokenResponse>()
