@@ -14,6 +14,10 @@ use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
 
+const POSTMESSAGE_BODY_OK: &str =
+    "<script>try{window.opener.postMessage('\"authTokenSet\"', '*')}catch(e){}window.close()</script>";
+const POSTMESSAGE_BODY_FAILED: &str = "<script>try{window.opener.postMessage('\"authTokenFailed\"', '*')}catch(e){}window.close()</script>";
+
 pub async fn callback_handler(
     req: Request,
     _: Context,
@@ -40,27 +44,31 @@ pub async fn callback_handler(
             &user.id,
             &user.role,
             app_ctx.cfg.jwt_secret.as_bytes(),
-            false,
-            false,
+            user.patreon_connected,
+            user.patreon_status.eq(&PatronStatus::Active),
         )?;
 
-        Ok(create_cookie_response(
+        Ok(create_postmessage_response(
             jwt,
             &app_ctx.cfg.auth_cookie_domain,
             &app_ctx.cfg.auth_cookie_name,
             &app_ctx.cfg.auth_cookie_path,
-            &app_ctx.cfg.success_redirect_url,
         ))
     } else {
         Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
+            .header(
+                "Access-Control-Allow-Origin",
+                req.headers()
+                    .get("origin")
+                    .map_or("*", |h| h.to_str().unwrap()),
+            )
             .header("Access-Control-Allow-Credentials", "true")
             .header(
                 "Access-Control-Allow-Headers",
                 "Accept,Authorization,Cookie,Content-Type",
             )
-            .body("Missing code parameter".to_string())
+            .body(POSTMESSAGE_BODY_FAILED.to_string())
             .unwrap())
     }
 }
@@ -83,6 +91,26 @@ pub fn create_cookie_response(
         .header(header::SET_COOKIE, cookie.to_string())
         .header(header::LOCATION, redirect_url.to_string())
         .body("".to_string())
+        .unwrap()
+}
+
+pub fn create_postmessage_response(
+    jwt: String,
+    auth_cookie_domain: &str,
+    auth_cookie_name: &str,
+    auth_cookie_path: &str,
+) -> Response<String> {
+    let cookie = Cookie::build(auth_cookie_name, jwt)
+        .domain(auth_cookie_domain)
+        .path(auth_cookie_path)
+        .http_only(true)
+        .finish();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::SET_COOKIE, cookie.to_string())
+        .header(header::CONTENT_TYPE, "text/html".to_string())
+        .body(POSTMESSAGE_BODY_OK.to_string())
         .unwrap()
 }
 
