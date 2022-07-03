@@ -1,135 +1,22 @@
 use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
-use std::fmt;
-use std::str::FromStr;
+use std::convert::TryInto;
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
 use aws_sdk_dynamodb::model::AttributeValue;
 use aws_sdk_dynamodb::output::PutItemOutput;
-use aws_sdk_dynamodb::{Client as DynamodbClient, Error as DynamoDbError, SdkError};
+use aws_sdk_dynamodb::types::SdkError;
+use aws_sdk_dynamodb::{Client as DynamodbClient, Client, Error as DynamoDbError};
 use chrono::DateTime;
-use papo_provider_patreon::{PatreonToken, PatronStatus};
-use serde::{Deserialize, Serialize};
+use dynomite::error::AttributeError;
+use sa_model::{patreon_token::PatreonToken, user::User};
+use serde::Deserialize;
 use thiserror::Error as ThisError;
 
 #[derive(Deserialize, Debug)]
 pub struct Identity {
     pub id: String,
     pub user_id: String,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-#[non_exhaustive]
-pub enum Role {
-    User,
-    Admin,
-}
-
-impl Role {
-    pub fn from_str(role: &str) -> Role {
-        match role {
-            "Admin" => Role::Admin,
-            _ => Role::User,
-        }
-    }
-}
-
-impl fmt::Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Role::User => write!(f, "User"),
-            Role::Admin => write!(f, "Admin"),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Claims {
-    pub sub: String,
-    pub role: String,
-    pub pc: bool, // patreon connected
-    pub ps: bool, // patreon supporter
-    pub exp: usize,
-}
-
-#[derive(Debug)]
-pub struct User {
-    pub id: String,
-    pub name: String,
-    pub email: String,
-    pub role: Role,
-    pub patreon_status: PatronStatus,
-    pub patreon_connected: bool,
-}
-
-impl TryFrom<HashMap<String, AttributeValue>> for User {
-    type Error = UserParseError;
-
-    fn try_from(user: HashMap<String, AttributeValue>) -> Result<Self, Self::Error> {
-        if let Some(id) = user.get("id") {
-            if let Ok(id) = id.as_s() {
-                if let Some(name) = user.get("name") {
-                    if let Ok(name) = name.as_s() {
-                        if let Some(email) = user.get("email") {
-                            if let Ok(email) = email.as_s() {
-                                if let Some(role) = user.get("role") {
-                                    if let Ok(role) = role.as_s() {
-                                        if let Some(patreon_status) = user.get("patreon_status") {
-                                            if let Ok(patreon_status) = patreon_status.as_s() {
-                                                if let Some(patreon_connected) =
-                                                    user.get("patreon_connected")
-                                                {
-                                                    if let Ok(&patreon_connected) =
-                                                        patreon_connected.as_bool()
-                                                    {
-                                                        Ok(User {
-                                                            id: id.clone(),
-                                                            name: name.clone(),
-                                                            email: email.clone(),
-                                                            role: Role::from_str(role),
-                                                            patreon_connected,
-                                                            patreon_status: PatronStatus::from_str(
-                                                                patreon_status,
-                                                            ),
-                                                        })
-                                                    } else {
-                                                        Err(UserParseError::PatConNotABool)
-                                                    }
-                                                } else {
-                                                    Err(UserParseError::MissingPatCon)
-                                                }
-                                            } else {
-                                                Err(UserParseError::PatStatNotAString)
-                                            }
-                                        } else {
-                                            Err(UserParseError::MissingPatStat)
-                                        }
-                                    } else {
-                                        Err(UserParseError::RoleNotAString)
-                                    }
-                                } else {
-                                    Err(UserParseError::MissingRole)
-                                }
-                            } else {
-                                Err(UserParseError::EmailNotAString)
-                            }
-                        } else {
-                            Err(UserParseError::MissingEmail)
-                        }
-                    } else {
-                        Err(UserParseError::NameNotAString)
-                    }
-                } else {
-                    Err(UserParseError::MissingName)
-                }
-            } else {
-                Err(UserParseError::IdNotAString)
-            }
-        } else {
-            Err(UserParseError::MissingId)
-        }
-    }
 }
 
 #[derive(ThisError, Debug)]
@@ -185,6 +72,9 @@ pub enum ModelError {
 
     #[error("could not query dynamodb")]
     DynamoDbQueryError(#[from] SdkError<QueryError>),
+
+    #[error("Dynomite could not (de)serialize")]
+    DynomiteError(#[from] AttributeError),
 }
 
 #[async_trait]
@@ -221,7 +111,7 @@ pub struct DynamoDbIdentityRepository<'a> {
 }
 
 impl<'a> DynamoDbIdentityRepository<'a> {
-    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbIdentityRepository {
+    pub fn new(client: &Client, table_name: String) -> DynamoDbIdentityRepository {
         DynamoDbIdentityRepository { client, table_name }
     }
 }
@@ -269,7 +159,7 @@ pub struct DynamoDbUserRepository<'a> {
 }
 
 impl<'a> DynamoDbUserRepository<'a> {
-    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbUserRepository {
+    pub fn new(client: &Client, table_name: String) -> DynamoDbUserRepository {
         DynamoDbUserRepository { client, table_name }
     }
 }
@@ -333,7 +223,7 @@ pub struct DynamoDbPatreonTokenRepository<'a> {
 }
 
 impl<'a> DynamoDbPatreonTokenRepository<'a> {
-    pub fn new(client: &DynamodbClient, table_name: String) -> DynamoDbPatreonTokenRepository {
+    pub fn new(client: &Client, table_name: String) -> DynamoDbPatreonTokenRepository {
         DynamoDbPatreonTokenRepository { client, table_name }
     }
 }

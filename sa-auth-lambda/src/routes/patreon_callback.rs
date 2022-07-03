@@ -1,24 +1,25 @@
+use chrono::{Duration, Utc};
 use lambda_http::http::StatusCode;
 use lambda_http::lambda_runtime::Error;
-use lambda_http::{Context, Request, RequestExt, Response};
+use lambda_http::{Body, Request, RequestExt, Response};
 
-use crate::callback::{create_cookie_response, create_jwt};
-use log::debug;
-use papo_provider_core::OAuthProvider;
-use papo_provider_patreon::{PatreonIdentityResponse, PatreonToken, PatronStatus};
+use crate::routes::callback::{create_cookie_response, create_jwt};
+use papo_provider_core::{OAuthProvider, TokenResponse};
+use papo_provider_patreon::PatreonIdentityResponse;
 use sa_auth_model::{PatreonTokenRepository, UserRepository};
+use sa_model::{patreon_status::PatronStatus, patreon_token::PatreonToken};
+use tracing::debug;
 
 use crate::context::AppContext;
-use crate::me::get_claims_from_request;
+use crate::routes::me::get_claims_from_cookies;
 
 pub async fn patreon_callback_handler(
     req: Request,
-    _: Context,
     app_ctx: &AppContext,
-) -> Result<Response<String>, Error> {
+) -> Result<Response<Body>, Error> {
     // parse JWT from request cookie to get JWT claims
-    if let Some(claims) = get_claims_from_request(&req, app_ctx) {
-        if let Some(code) = req.query_string_parameters().get("code") {
+    if let Some(claims) = get_claims_from_cookies(&req.headers().get_all("Cookie"), app_ctx) {
+        if let Some(code) = req.query_string_parameters().first("code") {
             let code = code.to_string();
             let provider = &app_ctx.patreon_oauth_provider();
 
@@ -38,8 +39,7 @@ pub async fn patreon_callback_handler(
             );
 
             // create a new identity table entry to store the access and refresh tokens
-            let patreon_token =
-                PatreonToken::from_token_response(token_response, &identity.data.id, &claims.sub);
+            let patreon_token = from_token_response(token_response, &identity.data.id, &claims.sub);
 
             app_ctx
                 .patreon_token_repository()
@@ -81,38 +81,32 @@ pub async fn patreon_callback_handler(
                 debug!("User not found when linking Patreon! returning 500");
                 Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body("User not found".to_string())
+                    .body("User not found".into())
                     .unwrap())
             }
         } else {
             Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
-                .header("Access-Control-Allow-Credentials", "true")
-                .header(
-                    "Access-Control-Allow-Headers",
-                    "Accept,Authorization,Cookie,Content-Type",
-                )
-                .body("Missing code parameter".to_string())
+                .body("Missing code parameter".into())
                 .unwrap())
         }
     } else {
         Ok(Response::builder()
             .status(StatusCode::UNAUTHORIZED)
-            .header("Access-Control-Allow-Origin", req.headers().get("origin").map_or("*", |h|h.to_str().unwrap()))
-            .header("Access-Control-Allow-Credentials", "true")
-            .header(
-                "Access-Control-Allow-Headers",
-                "Accept,Authorization,Cookie,Content-Type",
-            )
-            .body("401 Not Authorized".to_string())
+            .body("401 Not Authorized".into())
             .unwrap())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use async_trait::async_trait;
-
-    use super::*;
+pub fn from_token_response(resp: TokenResponse, patron_id: &str, user_id: &str) -> PatreonToken {
+    PatreonToken {
+        id: user_id.to_string(),
+        patreon_id: patron_id.to_string(),
+        access_token: resp.access_token,
+        refresh_token: resp.refresh_token,
+        scope: resp.scope,
+        created_at: Utc::now(),
+        expires_at: Utc::now() + Duration::seconds(resp.expires_in as i64),
+        updated_at: Utc::now(),
+    }
 }
