@@ -1,4 +1,5 @@
 use aws_sdk_dynamodb::Client as DynamodbClient;
+use envconfig::Envconfig;
 use papo_provider_google::GoogleOAuthProvider;
 use papo_provider_patreon::PatreonOAuthProvider;
 use reqwest::Client as ReqwestClient;
@@ -19,7 +20,14 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub async fn new(cfg: AppConfig) -> AppContext {
+    pub async fn new() -> AppContext {
+        AppContext::with_config(
+            AppConfig::init_from_env().expect("Could not instantiate AppConfig from env vars"),
+        )
+        .await
+    }
+
+    pub async fn with_config(cfg: AppConfig) -> AppContext {
         let id_generator = StringGenerator::default();
         let reqwest_client = ReqwestClient::new();
 
@@ -73,7 +81,6 @@ impl AppContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AppConfig;
     use std::env;
     use unique_id::Generator;
 
@@ -95,8 +102,7 @@ mod tests {
         env::set_var("TABLE_NAME_PATREON_TOKENS", "sa-patreon-tokens");
         env::set_var("PATREON_SUPPORT_CAMPAIGN_ID", "TEST_CAMPAIGN_ID");
 
-        let cfg = AppConfig::new();
-        let app_ctx: AppContext = AppContext::new(cfg).await;
+        let app_ctx: AppContext = AppContext::new().await;
 
         let generated_id = app_ctx.id_generator.next_id();
         assert_ne!(generated_id, "");

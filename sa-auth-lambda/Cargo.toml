@@ -8,26 +8,33 @@ keywords = ["AWS", "Lambda", "Auth", "OAuth"]
 autobins = false
 
 [dependencies]
+anyhow = "1"
 async-trait = "0.1.51"
-aws-config = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-config" }
-aws-types = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-types" }
-aws-sdk-dynamodb = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.19-alpha", package = "aws-sdk-dynamodb" }
+atty = "0.2"
+aws-config = "^0.12"
+aws_lambda_events = { git = "https://github.com/LegNeato/aws-lambda-events", branch="master"}
+aws-types = "^0.12"
+aws-sdk-dynamodb = "^0.12"
+cmake = "=0.1.45"
 chrono = "0.4"
 cookie = "0.15"
+envconfig = "0.10"
 jsonwebtoken = "7"
-lambda_http = "0.4"
-lambda_runtime = "0.4"
-log = "0.4"
+lambda_http = "^0.5.1"
+lambda_runtime = "^0.5.1"
 papo-provider-core = { path = "../papo-provider-core" }
 papo-provider-google = { path = "../papo-provider-google" }
 papo-provider-patreon = { path = "../papo-provider-patreon" }
 sa-auth-model = { path = "../sa-auth-model" }
-reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
+sa-model = { git = "https://github.com/sdd/sa-model", branch="master" }
+reqwest = { version = "0.11", features = ["native-tls-vendored", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
-simple_logger = "1.13"
 thiserror = "1.0"
-tokio = "1"
+tokio = { version = "1", features = ["macros"] }
+tower-http = { version = "0.3.3", features = ["cors"] }
+tracing = "^0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 unique_id = "0.1"
 urlencoding = "2.1"
 

@@ -1,5 +1,6 @@
 use aws_sdk_dynamodb::error::{GetItemError, PutItemError, QueryError};
-use aws_sdk_dynamodb::{Error as DynamoDbError, SdkError};
+use aws_sdk_dynamodb::types::SdkError;
+use aws_sdk_dynamodb::Error as DynamoDbError;
 use reqwest::Error as ReqwestError;
 
 use sa_auth_model::{ModelError, UserParseError};

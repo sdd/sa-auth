@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use log::trace;
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use papo_provider_core::{OAuthProvider, PapoProviderError, TokenRequest, TokenResponse};
+use sa_model::patreon_status::PatronStatus;
 
 pub const PATREON_ENDPOINT_TOKEN: &str = "https://www.patreon.com/api/oauth2/token";
 pub const PATREON_ENDPOINT_IDENTITY: &str = "https://www.patreon.com/api/oauth2/v2/identity?include=memberships&fields%5Buser%5D=created,email,full_name,thumb_url,is_email_verified&fields%5Bmember%5D=patron_status";
@@ -24,67 +24,6 @@ pub struct PatreonOAuthProvider<'a> {
     token_url: &'a str,
     identity_url: &'a str,
     redirect_url: &'a str,
-}
-
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-#[non_exhaustive]
-pub enum PatronStatus {
-    #[serde(alias = "active_patron")]
-    Active,
-    #[serde(alias = "declined_patron")]
-    Declined,
-    #[serde(alias = "former_patron")]
-    Former,
-}
-
-impl PatronStatus {
-    pub fn from_str(role: &str) -> PatronStatus {
-        match role {
-            "Active" => PatronStatus::Active,
-            "active_patron" => PatronStatus::Active,
-            "Former" => PatronStatus::Former,
-            "former_patron" => PatronStatus::Former,
-            "declined_patron" => PatronStatus::Declined,
-            _ => PatronStatus::Declined,
-        }
-    }
-}
-
-impl fmt::Display for PatronStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PatronStatus::Active => write!(f, "Active"),
-            PatronStatus::Declined => write!(f, "Declined"),
-            PatronStatus::Former => write!(f, "Former"),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct PatreonToken {
-    pub id: String,         // sa user id
-    pub patreon_id: String, // patreon user id
-    pub access_token: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub refresh_token: String,
-    pub scope: String,
-}
-
-impl PatreonToken {
-    pub fn from_token_response(resp: TokenResponse, patron_id: &str, user_id: &str) -> Self {
-        PatreonToken {
-            id: user_id.to_string(),
-            patreon_id: patron_id.to_string(),
-            access_token: resp.access_token,
-            refresh_token: resp.refresh_token,
-            scope: resp.scope,
-            created_at: Utc::now(),
-            expires_at: Utc::now() + Duration::seconds(resp.expires_in as i64),
-            updated_at: Utc::now(),
-        }
-    }
 }
 
 #[derive(Deserialize, Debug, Serialize)]

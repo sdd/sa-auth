@@ -1,15 +1,11 @@
 use cookie::Cookie;
 use lambda_http::http::{header, StatusCode};
-use lambda_http::{Context, Request, Response};
+use lambda_http::{Body, Request, Response};
 
 use crate::context::AppContext;
 use crate::Error;
 
-pub fn logout_handler(
-    _: Request,
-    _: Context,
-    app_ctx: &AppContext,
-) -> Result<Response<String>, Error> {
+pub fn logout_handler(_: Request, app_ctx: &AppContext) -> Result<Response<Body>, Error> {
     let cookie = Cookie::build(&app_ctx.cfg.auth_cookie_name, "")
         .domain(&app_ctx.cfg.auth_cookie_domain)
         .path(&app_ctx.cfg.auth_cookie_path)
@@ -19,18 +15,15 @@ pub fn logout_handler(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::SET_COOKIE, cookie.to_string())
-        .body("".to_string())
+        .body("".into())
         .unwrap())
 }
 
 #[cfg(test)]
 mod tests {
-    use lambda_http::http::Uri;
     use std::env;
-    use std::str::FromStr;
 
     use super::*;
-    use crate::config::AppConfig;
     use crate::context::AppContext;
 
     #[tokio::test]
@@ -50,14 +43,11 @@ mod tests {
         env::set_var("TABLE_NAME_USERS", "sa-users");
         env::set_var("TABLE_NAME_PATREON_TOKENS", "sa-patreon-tokens");
         env::set_var("PATREON_SUPPORT_CAMPAIGN_ID", "TEST_CAMPAIGN_ID");
-        let cfg = AppConfig::new();
-        let app_ctx = AppContext::new(cfg).await;
+        let app_ctx = AppContext::new().await;
 
-        let mut req = Request::default();
-        *req.uri_mut() = Uri::from_str("https://example.local/logout").unwrap();
-        let ctx = Context::default();
+        let req = Request::default();
 
-        let result = logout_handler(req, ctx, &app_ctx).unwrap();
+        let result = logout_handler(req, &app_ctx).unwrap();
         println!("result: {:?}", &result);
         assert_eq!(result.status(), StatusCode::OK);
 

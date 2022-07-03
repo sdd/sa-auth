@@ -3,13 +3,13 @@ use cookie::Cookie;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use lambda_http::http::{header, StatusCode};
 use lambda_http::lambda_runtime::Error;
-use lambda_http::{Context, Request, RequestExt, Response};
+use lambda_http::{Body, Request, RequestExt, Response};
 use unique_id::Generator;
 
-use log::{debug, warn};
 use papo_provider_core::{Identity as GoogleIdentity, OAuthProvider};
-use papo_provider_patreon::PatronStatus;
-use sa_auth_model::{Claims, Identity, IdentityRepository, ModelError, Role, User, UserRepository};
+use sa_auth_model::{Identity, IdentityRepository, ModelError, UserRepository};
+use sa_model::{claims::Claims, patreon_status::PatronStatus, role::Role, user::User};
+use tracing::{debug, warn};
 
 use crate::context::AppContext;
 use crate::error::AuthServiceError;
@@ -18,12 +18,8 @@ const POSTMESSAGE_BODY_OK: &str =
     "<script>try{window.opener.postMessage('\"authTokenSet\"', '*')}catch(e){}window.close()</script>";
 const POSTMESSAGE_BODY_FAILED: &str = "<script>try{window.opener.postMessage('\"authTokenFailed\"', '*')}catch(e){}window.close()</script>";
 
-pub async fn callback_handler(
-    req: Request,
-    _: Context,
-    app_ctx: &AppContext,
-) -> Result<Response<String>, Error> {
-    if let Some(code) = req.query_string_parameters().get("code") {
+pub async fn callback_handler(req: Request, app_ctx: &AppContext) -> Result<Response<Body>, Error> {
+    if let Some(code) = req.query_string_parameters().first("code") {
         let code = code.to_string();
         let provider = &app_ctx.google_oauth_provider();
 
@@ -57,18 +53,7 @@ pub async fn callback_handler(
     } else {
         Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .header(
-                "Access-Control-Allow-Origin",
-                req.headers()
-                    .get("origin")
-                    .map_or("*", |h| h.to_str().unwrap()),
-            )
-            .header("Access-Control-Allow-Credentials", "true")
-            .header(
-                "Access-Control-Allow-Headers",
-                "Accept,Authorization,Cookie,Content-Type",
-            )
-            .body(POSTMESSAGE_BODY_FAILED.to_string())
+            .body(POSTMESSAGE_BODY_FAILED.into())
             .unwrap())
     }
 }
@@ -79,7 +64,7 @@ pub fn create_cookie_response(
     auth_cookie_name: &str,
     auth_cookie_path: &str,
     redirect_url: &str,
-) -> Response<String> {
+) -> Response<Body> {
     let cookie = Cookie::build(auth_cookie_name, jwt)
         .domain(auth_cookie_domain)
         .path(auth_cookie_path)
@@ -90,7 +75,7 @@ pub fn create_cookie_response(
         .status(StatusCode::FOUND)
         .header(header::SET_COOKIE, cookie.to_string())
         .header(header::LOCATION, redirect_url.to_string())
-        .body("".to_string())
+        .body("".into())
         .unwrap()
 }
 
@@ -99,7 +84,7 @@ pub fn create_postmessage_response(
     auth_cookie_domain: &str,
     auth_cookie_name: &str,
     auth_cookie_path: &str,
-) -> Response<String> {
+) -> Response<Body> {
     let cookie = Cookie::build(auth_cookie_name, jwt)
         .domain(auth_cookie_domain)
         .path(auth_cookie_path)
@@ -110,7 +95,7 @@ pub fn create_postmessage_response(
         .status(StatusCode::OK)
         .header(header::SET_COOKIE, cookie.to_string())
         .header(header::CONTENT_TYPE, "text/html".to_string())
-        .body(POSTMESSAGE_BODY_OK.to_string())
+        .body(POSTMESSAGE_BODY_OK.into())
         .unwrap()
 }
 
@@ -214,7 +199,7 @@ mod tests {
     use async_trait::async_trait;
     use aws_sdk_dynamodb::error::PutItemError;
     use aws_sdk_dynamodb::output::PutItemOutput;
-    use aws_sdk_dynamodb::SdkError;
+    use aws_sdk_dynamodb::types::SdkError;
     use sa_auth_model::ModelError;
     use unique_id::string::StringGenerator;
 
@@ -502,6 +487,6 @@ mod tests {
             result.0.headers.get("set-cookie").unwrap(),
             "sa-auth=A_JWT; HttpOnly; Path=/; Domain=solvastro.com"
         );
-        assert_eq!(result.1, "");
+        assert_eq!(result.1.as_ref(), "".as_bytes());
     }
 }

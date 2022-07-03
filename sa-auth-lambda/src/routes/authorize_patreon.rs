@@ -1,15 +1,11 @@
 use lambda_http::http::{header, StatusCode};
-use lambda_http::{Context, Request, Response};
+use lambda_http::{Body, Request, Response};
 use papo_provider_core::OAuthProvider;
 
 use crate::context::AppContext;
 use crate::Error;
 
-pub fn login_patreon_handler(
-    _: Request,
-    _: Context,
-    app_ctx: &AppContext,
-) -> Result<Response<String>, Error> {
+pub fn login_patreon_handler(_: Request, app_ctx: &AppContext) -> Result<Response<Body>, Error> {
     Ok(Response::builder()
         .status(StatusCode::FOUND)
         .header(
@@ -18,7 +14,7 @@ pub fn login_patreon_handler(
                 .patreon_oauth_provider()
                 .get_login_url(&app_ctx.cfg.patreon_oauth_config.redirect_url),
         )
-        .body("".to_string())
+        .body("".into())
         .unwrap())
 }
 
@@ -29,7 +25,6 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::config::AppConfig;
     use crate::context::AppContext;
 
     #[tokio::test]
@@ -49,14 +44,13 @@ mod tests {
         env::set_var("TABLE_NAME_USERS", "sa-users");
         env::set_var("TABLE_NAME_PATREON_TOKENS", "sa-patreon-tokens");
         env::set_var("PATREON_SUPPORT_CAMPAIGN_ID", "TEST_CAMPAIGN_ID");
-        let cfg = AppConfig::new();
-        let app_ctx = AppContext::new(cfg).await;
+
+        let app_ctx = AppContext::new().await;
 
         let mut req = Request::default();
         *req.uri_mut() = Uri::from_str("https://example.local/login").unwrap();
-        let ctx = Context::default();
 
-        let result = login_patreon_handler(req, ctx, &app_ctx).unwrap();
+        let result = login_patreon_handler(req, &app_ctx).unwrap();
         assert_eq!(result.status(), StatusCode::FOUND);
         assert_eq!(result.headers().get("location").unwrap(), "https://www.patreon.com/oauth2/authorize?redirect_uri=https%3A%2F%2Flocalhost%2Fredir&response_type=code&client_id=TEST_CLIENT_ID_P&scope=identity%20identity%5Bemail%5D");
     }
